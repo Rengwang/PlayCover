@@ -1,3 +1,8 @@
+> [!IMPORTANT]
+> **Personal Patch Fork (`Rengwang/PlayCover`)** — 基于上游 [`PlayCover/PlayCover`](https://github.com/PlayCover/PlayCover)（`develop`）维护的个人修补分支，配套 [`Rengwang/PlayTools`](https://github.com/Rengwang/PlayTools)。
+> 新增：**Smart Auto-Adapt 智能自适应窗口模式（`resolution = 7`）**、推荐比例等比缩放分流、无头 `--install-ipa` CLI 安装与本地无证书 Ad-Hoc 构建支持。
+> 完整改动清单与验证记录见 [SESSION_MODIFICATIONS.md](./SESSION_MODIFICATIONS.md)。
+
 <div id="top"></div>
 
 ‎<h1 align="center">[![Contributors][contributors-shield]][contributors-url]
