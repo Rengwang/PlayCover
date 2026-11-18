@@ -210,7 +210,14 @@
 "settings.picker.adaptiveRes.0" = "默认分辨率";
 "settings.picker.adaptiveRes.1" = "自动（基于显示器分辨率）";
 "settings.picker.adaptiveRes.5" = "自定义";
+"settings.picker.adaptiveRes.6" = "可自由调整大小";
+"settings.picker.adaptiveRes.7" = "智能自适应";
 "settings.picker.aspectRatio" = "长宽比：";
+"settings.picker.aspectRatio.free" = "自由";
+"settings.picker.aspectRatio.custom" = "自定义";
+"settings.text.smartAdaptDetected" = "检测到的布局：";
+"settings.text.smartAdapt.adaptive" = "自适应窗口";
+"settings.text.smartAdapt.aspect" = "推荐比例 (%@)";
 "settings.toggle.disableDisplaySleep.help" = "在该应用运行时防止显示屏关闭";
 "settings.toggle.jbBypass.help" = "尝试绕过某些游戏的越狱检测 （无法保证能够一直正常工作）";
 "settings.info.displayName" = "显示名称:";

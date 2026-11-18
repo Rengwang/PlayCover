@@ -176,9 +176,13 @@
 "settings.picker.adaptiveRes.1" = "Auto (Based on Display)";
 "settings.picker.adaptiveRes.5" = "Custom";
 "settings.picker.adaptiveRes.6" = "Resizable";
+"settings.picker.adaptiveRes.7" = "Smart Auto-Adapt";
 "settings.text.customHeight" = "Height";
 "settings.text.customWidth" = "Width";
 "settings.text.detectedResolution" = "Detected Resolution:";
+"settings.text.smartAdaptDetected" = "Detected Layout:";
+"settings.text.smartAdapt.adaptive" = "Adaptive Window";
+"settings.text.smartAdapt.aspect" = "Recommended Aspect (%@)";
 "settings.picker.aspectRatio" = "Aspect ratio:";
 "settings.picker.aspectRatio.free" = "Free";
 "settings.picker.aspectRatio.custom" = "Custom";

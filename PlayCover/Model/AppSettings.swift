@@ -19,7 +19,7 @@ struct AppSettingsData: Codable {
     var windowWidth = 1920
     var windowHeight = 1080
     var customScaler = 2.0
-    var resolution = 1
+    var resolution = 7
     var aspectRatio = 1
     var notch: Bool = NSScreen.hasNotch()
     var bypass = false
@@ -67,7 +67,7 @@ struct AppSettingsData: Codable {
         windowWidth = try container.decodeIfPresent(Int.self, forKey: .windowWidth) ?? 1920
         windowHeight = try container.decodeIfPresent(Int.self, forKey: .windowHeight) ?? 1080
         customScaler = try container.decodeIfPresent(Double.self, forKey: .customScaler) ?? 2.0
-        resolution = try container.decodeIfPresent(Int.self, forKey: .resolution) ?? 1
+        resolution = try container.decodeIfPresent(Int.self, forKey: .resolution) ?? 7
         aspectRatio = try container.decodeIfPresent(Int.self, forKey: .aspectRatio) ?? 1
         notch = try container.decodeIfPresent(Bool.self, forKey: .notch) ?? NSScreen.hasNotch()
         bypass = try container.decodeIfPresent(Bool.self, forKey: .bypass) ?? false
@@ -131,6 +131,7 @@ class AppSettings {
                                                 .appendingPathExtension("plist")
         var defaults = AppSettingsData()
         defaults.bundleIdentifier = info.bundleIdentifier
+        Self.applySmartAdaptDefaults(to: &defaults, info: info)
         settings = defaults
         if !decode() {
             preserveUnreadableSettingsIfPresent()
@@ -142,6 +143,29 @@ class AppSettings {
         }
     }
 
+    static func applySmartAdaptDefaults(to data: inout AppSettingsData, info: AppInfo) {
+        guard data.resolution == 7 else { return }
+        if info.supportsAdaptiveWindowLayout {
+            data.resizableAspectRatioType = 0
+            data.resizableAspectRatioWidth = 0
+            data.resizableAspectRatioHeight = 0
+            data.windowWidth = 900
+            data.windowHeight = 760
+        } else {
+            let ratio = info.recommendedAspectRatio
+            let logicalRes = info.recommendedLogicalResolution
+            data.resizableAspectRatioType = 1
+            data.resizableAspectRatioWidth = ratio.width
+            data.resizableAspectRatioHeight = ratio.height
+            data.windowWidth = logicalRes.width
+            data.windowHeight = logicalRes.height
+        }
+    }
+
+    func applySmartAdaptDefaults(to data: inout AppSettingsData) {
+        Self.applySmartAdaptDefaults(to: &data, info: info)
+    }
+
     public func sync() {
         var updatedSettings = settings
         updatedSettings.notch = NSScreen.hasNotch()
@@ -149,6 +173,8 @@ class AppSettings {
             let resolution = AppSettings.autoResolution()
             updatedSettings.windowWidth = resolution.width
             updatedSettings.windowHeight = resolution.height
+        } else if updatedSettings.resolution == 7 {
+            applySmartAdaptDefaults(to: &updatedSettings)
         }
         settings = updatedSettings
     }
@@ -168,6 +194,7 @@ class AppSettings {
     public func reset() {
         var defaults = AppSettingsData()
         defaults.bundleIdentifier = info.bundleIdentifier
+        applySmartAdaptDefaults(to: &defaults)
         settings = defaults
     }
 

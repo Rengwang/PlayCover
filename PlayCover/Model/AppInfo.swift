@@ -268,3 +268,61 @@ public class AppInfo {
         }
     }
 }
+
+extension AppInfo {
+    var deviceFamilies: [Int] {
+        if let ints = self[ints: "UIDeviceFamily"], !ints.isEmpty {
+            return ints
+        }
+        if let numbers = self[numbers: "UIDeviceFamily"], !numbers.isEmpty {
+            return numbers.map(\.intValue)
+        }
+        return [1]
+    }
+
+    var supportsIPad: Bool {
+        deviceFamilies.contains(2)
+    }
+
+    var requiresFullScreen: Bool {
+        self[bool: "UIRequiresFullScreen"] ?? false
+    }
+
+    private var supportedOrientations: [String] {
+        let ipadOrientations = self[strings: "UISupportedInterfaceOrientations~ipad"] ?? []
+        let defaultOrientations = self[strings: "UISupportedInterfaceOrientations"] ?? []
+        return (supportsIPad && !ipadOrientations.isEmpty) ? ipadOrientations : defaultOrientations
+    }
+
+    var supportsAdaptiveWindowLayout: Bool {
+        let orientations = supportedOrientations
+        let hasPortrait = orientations.contains { $0.contains("Portrait") }
+        let hasLandscape = orientations.contains { $0.contains("Landscape") }
+        let hasSceneManifest = rawStorage["UIApplicationSceneManifest"] != nil
+        return supportsIPad && !requiresFullScreen && ((hasPortrait && hasLandscape) || hasSceneManifest)
+    }
+
+    var recommendedAspectRatio: (width: Int, height: Int) {
+        let orientations = supportedOrientations
+        let hasPortrait = orientations.contains { $0.contains("Portrait") }
+        let hasLandscape = orientations.contains { $0.contains("Landscape") }
+        if hasLandscape && !hasPortrait {
+            return (16, 9)
+        }
+        if supportsIPad && !deviceFamilies.contains(1) {
+            return (3, 4)
+        }
+        return (9, 16)
+    }
+
+    var recommendedLogicalResolution: (width: Int, height: Int) {
+        switch recommendedAspectRatio {
+        case (16, 9):
+            return (1280, 720)
+        case (3, 4):
+            return (768, 1024)
+        default:
+            return (414, 736)
+        }
+    }
+}
