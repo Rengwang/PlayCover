@@ -99,4 +99,21 @@
 - **哔哩哔哩（`tv.danmaku.bilianime`）**：
   - 在前期构建中验证了首页推荐窄屏 2 列 ↔ 宽屏 3 列自适应、“分区”网格重排，以及修复 `Scaled` 模式下 `TopmostView` 尺寸残留与 `BFCTabScrollView` 误触发降级。
 - **公考雷达（`com.midas.gkld`）**：
-  - 验证了推荐比例 `9:16` 等比缩放居中渲染（`clippedViewCount = 0`）；同时排查确认其弹窗 `Hooking framework detected` 源自包内内置安全 SDK `FirebaseNIMessInstallation.framework`（含 `startDelegateHookCheck`、`handlePiracyCasesAdvanced` 等），因 PlayCover 默认注入 `PlayTools.framework` 而被拦截，可在 PlayCover「应用设置 → 杂项 → 移除 PlayTools」或「绕过」中按官方文档开关排查，未对其做任何破解或绕过补丁。
+  - 验证了推荐比例 `9:16` 等比缩放居中渲染（`clippedViewCount = 0`）。
+
+---
+
+## 六、后续增强（iPhone Duo、UI Scale、SDK Shift 与稳定性护栏）
+
+1. **iPhone Duo（折叠屏宽窗）布局与系统状态反映**
+   - 默认设备标识与布局选项新增 `iPhone Duo`（`iPhone19,4` / `layoutIdiom = 3`，与 iPhone / iPad / 自动并列）。
+   - `AppInfo.swift`、`AKPlugin.swift`、`PlayScreen.swift` 识别 `DTSDKName >= 27.1`（`supportsDuoAdaptive`）与 `UIRequiresFullScreenIgnoredStartingWithVersion`。
+   - 在 `iPhone Duo` 展开横屏宽窗下通过 `UIWindow.safeAreaInsets`、`UIWindowScene.interfaceOrientation`、`UIApplication.statusBarOrientation`、`UIWindowSceneGeometry.interfaceOrientation` 与 `_UIScreenFixedCoordinateSpace.bounds` 动态反映折叠/展开与独占模拟内屏占比（实测高德地图 `17.03.1` 首页与路线规划页在 `1050×780` 宽窗下正确激活左栏右图分栏，哔哩哔哩 `9.20.0` `1100×820` 4 列 ↔ `420×770` 2 列自由重排）。
+2. **Catalyst 界面缩放比例（`uiScale` / `iOSMacScaleFactor`）**
+   - 在单应用图形设置中支持 `100%`（默认 1:1）、`77%`（macOS Catalyst 原版默认）、`115%`、`125%`、`150%`、`200%` 切换。
+3. **SDK Shift（强制解锁自由自适应缩放）单应用开关 + 模式 6 修复**
+   - 参考 `SDKShift-for-Duo` 思路，新增单应用开关 `sdkShift`：开启后在宿主与 `PlayTools` 中解除全屏与单向比例锁定，并在内存中为 `[NSBundle mainBundle]` 声明 `DTSDKName = iphoneos27.2` 与 `UIRequiresFullScreen = NO`（实测百度网盘 `13.37.5` 从 `9:16` 锁定解锁至 `900×760` 内容重排）。
+   - 修复模式 `6`（`Resizable`）下 `AKPlugin.aspectRatioSetting` 未优先判断 `resizableAspectRatioType == 0` 导致残留宽高仍锁死窗口比例的问题。
+4. **运行时兼容性与稳定性护栏**
+   - `Toucher.swift` 增加空 `keyWindow` 判空保护；`PlayedApple.swift` / `PlayedAppleDB.swift` 补齐默认 `kSecAttrAccessGroup` 与 `PRAGMA user_version` 建表检查。
+   - `PlayLoader.m` 增加 libc interpose 原函数快照防互调递归、`CloudKit` 缺失权限安全降级桩、`UINSUIKitTerminationController` 退出超时上限收敛与远程通知重复注册限流；`ProxyShield.m` 在签名前注入以向应用呈现 iOS 标准网络代理/网卡视图。
