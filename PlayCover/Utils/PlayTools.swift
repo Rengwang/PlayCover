@@ -357,4 +357,32 @@ class PlayTools {
             }
         }
 	}
+
+    static var proxyShieldPath: String {
+        NSString(string: "~/Library/Frameworks/PlayTools.framework/ProxyShield.dylib").expandingTildeInPath
+    }
+
+    static func installProxyShield(for appURL: URL) {
+        let plistURL = appURL.appendingPathComponent("Info.plist")
+        guard FileManager.default.fileExists(atPath: proxyShieldPath),
+              let data = try? Data(contentsOf: plistURL),
+              let decoded = try? PropertyListSerialization.propertyList(from: data, format: nil),
+              var plist = decoded as? [String: Any] else {
+            return
+        }
+
+        var environment = plist["LSEnvironment"] as? [String: String] ?? [:]
+        if environment["DYLD_INSERT_LIBRARIES"] == proxyShieldPath {
+            return
+        }
+        environment["DYLD_INSERT_LIBRARIES"] = proxyShieldPath
+        plist["LSEnvironment"] = environment
+
+        guard let output = try? PropertyListSerialization.data(
+            fromPropertyList: plist, format: .xml, options: 0
+        ) else {
+            return
+        }
+        try? output.write(to: plistURL)
+    }
 }

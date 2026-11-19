@@ -85,6 +85,13 @@ class PlayApp: BaseApp {
                 try PlayTools.installPluginInIPA(url)
             }
 
+            // Hand every app the iOS view of the network: an iOS build cannot see the
+            // host's system proxy, but a Catalyst build can - and risk-control SDKs treat
+            // that as a red flag. The shield is a tiny dylib shipped inside
+            // PlayTools.framework; it is injected through LSEnvironment because
+            // NSWorkspace gives us no way to pass an environment to the launched app.
+            PlayTools.installProxyShield(for: url)
+
             if try !Entitlements.areEntitlementsValid(app: self) {
                 sign()
             }
