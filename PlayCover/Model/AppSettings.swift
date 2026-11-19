@@ -15,7 +15,7 @@ struct AppSettingsData: Codable {
 
     var disableTimeout = false
     var displayRotation = 0
-    var iosDeviceModel = "iPad13,8"
+    var iosDeviceModel = "iPhone19,4"
     var windowWidth = 1920
     var windowHeight = 1080
     var customScaler = 2.0
@@ -52,6 +52,9 @@ struct AppSettingsData: Codable {
     var resizableAspectRatioHeight = 0
     var blockSleepSpamming = false
     var ignoreUnityKeyboardInitializationError = false
+    var uiScale: Double = 1.0
+    var layoutIdiom: Int = 3
+    var sdkShift = false
 
     init() {}
 
@@ -63,7 +66,7 @@ struct AppSettingsData: Codable {
         sensitivity = try container.decodeIfPresent(Float.self, forKey: .sensitivity) ?? 50
         disableTimeout = try container.decodeIfPresent(Bool.self, forKey: .disableTimeout) ?? false
         displayRotation = try container.decodeIfPresent(Int.self, forKey: .displayRotation) ?? 0
-        iosDeviceModel = try container.decodeIfPresent(String.self, forKey: .iosDeviceModel) ?? "iPad13,8"
+        iosDeviceModel = try container.decodeIfPresent(String.self, forKey: .iosDeviceModel) ?? "iPhone19,4"
         windowWidth = try container.decodeIfPresent(Int.self, forKey: .windowWidth) ?? 1920
         windowHeight = try container.decodeIfPresent(Int.self, forKey: .windowHeight) ?? 1080
         customScaler = try container.decodeIfPresent(Double.self, forKey: .customScaler) ?? 2.0
@@ -95,6 +98,10 @@ struct AppSettingsData: Codable {
         blockSleepSpamming = try container.decodeIfPresent(Bool.self, forKey: .blockSleepSpamming) ?? false
         ignoreUnityKeyboardInitializationError = try container.decodeIfPresent(
             Bool.self, forKey: .ignoreUnityKeyboardInitializationError) ?? false
+        let decodedUIScale = try container.decodeIfPresent(Double.self, forKey: .uiScale) ?? 1.0
+        uiScale = decodedUIScale <= 0.0 ? 1.0 : decodedUIScale
+        layoutIdiom = try container.decodeIfPresent(Int.self, forKey: .layoutIdiom) ?? 3
+        sdkShift = try container.decodeIfPresent(Bool.self, forKey: .sdkShift) ?? false
     }
 }
 
@@ -145,7 +152,7 @@ class AppSettings {
 
     static func applySmartAdaptDefaults(to data: inout AppSettingsData, info: AppInfo) {
         guard data.resolution == 7 else { return }
-        if info.supportsAdaptiveWindowLayout {
+        if info.supportsAdaptiveWindowLayout(forceSDKShift: data.sdkShift) {
             data.resizableAspectRatioType = 0
             data.resizableAspectRatioWidth = 0
             data.resizableAspectRatioHeight = 0

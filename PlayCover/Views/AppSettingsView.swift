@@ -231,8 +231,21 @@ struct GraphicsView: View {
                         Text("iPhone 14 Pro Max | A16 | 6GB").tag("iPhone15,3")
                         Text("iPhone 15 Pro Max | A17 Pro | 8GB").tag("iPhone16,2")
                         Text("iPhone 16 Pro Max | A18 Pro | 8GB").tag("iPhone17,2")
+                        Text("iPhone Duo | A20 Pro").tag("iPhone19,4")
                     }
                     .frame(width: 250)
+                }
+                HStack {
+                    Text("settings.picker.layoutIdiom")
+                    Spacer()
+                    Picker("", selection: $settings.settings.layoutIdiom) {
+                        Text("settings.picker.layoutIdiom.auto").tag(0)
+                        Text("settings.picker.layoutIdiom.phone").tag(1)
+                        Text("settings.picker.layoutIdiom.duo").tag(3)
+                        Text("settings.picker.layoutIdiom.pad").tag(2)
+                    }
+                    .frame(width: 250)
+                    .help("settings.picker.layoutIdiom.help")
                 }
                 HStack {
                     if showResolutionWarning {
@@ -340,7 +353,7 @@ struct GraphicsView: View {
                     } else if settings.settings.resolution == 7 {
                         Text("settings.text.smartAdaptDetected")
                         Spacer()
-                        if settings.info.supportsAdaptiveWindowLayout {
+                        if settings.info.supportsAdaptiveWindowLayout(forceSDKShift: settings.settings.sdkShift) {
                             Text("settings.text.smartAdapt.adaptive")
                         } else {
                             let ratio = settings.info.recommendedAspectRatio
@@ -369,6 +382,20 @@ struct GraphicsView: View {
                     } onDecrement: {
                         if customScaler > 0.5 { customScaler -= 0.1 }
                     }
+                }
+                HStack {
+                    Text("settings.picker.uiScale")
+                    Spacer()
+                    Picker("", selection: $settings.settings.uiScale) {
+                        Text("settings.picker.uiScale.default").tag(1.0)
+                        Text("settings.picker.uiScale.catalyst77").tag(0.77)
+                        Text("115%").tag(1.15)
+                        Text("125%").tag(1.25)
+                        Text("150%").tag(1.5)
+                        Text("200%").tag(2.0)
+                    }
+                    .frame(width: 250, alignment: .leading)
+                    .help("settings.picker.uiScale.help")
                 }
                 VStack(alignment: .leading) {
                     if #available(macOS 13.2, *) {
@@ -411,6 +438,9 @@ struct GraphicsView: View {
                     Spacer()
                     Toggle("settings.toggle.floatingWindow", isOn: $settings.settings.floatingWindow)
                     Spacer()
+                    Toggle("settings.toggle.sdkShift", isOn: $settings.settings.sdkShift)
+                        .help("settings.toggle.sdkShift.help")
+                    Spacer()
                 }
                 Spacer()
             }
@@ -422,6 +452,11 @@ struct GraphicsView: View {
             }
             .onChange(of: settings.settings.resolution) { _ in
                 setResolution()
+            }
+            .onChange(of: settings.settings.sdkShift) { _ in
+                if settings.settings.resolution == 7 {
+                    setResolution()
+                }
             }
             .onChange(of: settings.settings.aspectRatio) { _ in
                 setResolution()
