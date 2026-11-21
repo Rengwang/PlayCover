@@ -432,6 +432,9 @@ extension Macho {
 // through and returns through the `ret` padding those stubs are built with.
 // Nothing else in the app is touched, and the patch is idempotent.
 extension Macho {
+    /// Bumped whenever the matcher changes, so cached scan results are invalidated.
+    static let trapSchemaVersion = 3
+
     private static let instrNop: UInt32 = 0xD503_201F
     private static let poisonPairWindow = 8   // mov sp -> mov x30
     private static let poisonBranchWindow = 24 // mov x30 -> br
@@ -543,42 +546,54 @@ extension Macho {
             let last = end / 4
             var index = start / 4
             while index < last {
-                guard let spRegister = poisonedStackPointer(base[index]) else { index += 1; continue }
-
-                // mov x30, <same register> a few instructions later
-                var lrIndex = -1
-                let pairLimit = min(index + poisonPairWindow, last - 1)
-                var cursor = index + 1
-                while cursor <= pairLimit {
-                    if movedReturnAddress(base[cursor], from: spRegister) {
-                        lrIndex = cursor
-                        break
-                    }
-                    cursor += 1
-                }
-                guard lrIndex > 0 else { index += 1; continue }
-
-                // indirect branch shortly after
-                var branchIndex = -1
-                let branchLimit = min(lrIndex + poisonBranchWindow, last - 1)
-                cursor = lrIndex + 1
-                while cursor <= branchLimit {
-                    if isIndirectBranch(base[cursor]) {
-                        branchIndex = cursor
-                        break
-                    }
-                    cursor += 1
-                }
-                guard branchIndex > 0 else { index += 1; continue }
-
-                base[index] = instrNop
-                base[lrIndex] = instrNop
-                base[branchIndex] = instrNop
+                guard let trap = locateTrap(base, at: index, last: last) else { index += 1; continue }
+                base[trap.sp] = instrNop
+                base[trap.lr] = instrNop
+                base[trap.branch] = instrNop
                 patched += 1
-                index = branchIndex + 1
+                index = trap.branch + 1
             }
         }
         return patched
+    }
+
+    /// Locates a self-destruct trampoline starting at `index`.
+    ///
+    /// Only the `mov sp, Xn -> mov x30, Xn -> br Xm` order is rewritten in place.
+    ///
+    /// The reversed order (`mov x30, Xn` first, usually preceded by `mov x29, Xn`,
+    /// i.e. `mov x29/x30/sp, Xa -> br x16`) also exists — for example at
+    /// `ChinaMobile+0x1000094d8` — but it **must not** be patched automatically:
+    /// measured on the untouched binaries it matches 3,337 sites in ChinaMobile
+    /// 12.5.7 and 4,755 in ICBC, because the same 4-instruction shape is also used
+    /// as obfuscator decoy/filler. Rewriting thousands of `mov sp` instructions in
+    /// unknown contexts would corrupt ordinary stack handling. Those sites are
+    /// therefore left untouched until phase-0 evidence shows which of them are
+    /// actually reached.
+    private static func locateTrap(_ base: UnsafeMutablePointer<UInt32>, at index: Int,
+                                   last: Int) -> (sp: Int, lr: Int, branch: Int)? {
+        if let register = poisonedStackPointer(base[index]),
+           let lr = nextMatch(base, from: index + 1, limit: index + poisonPairWindow, last: last,
+                              matching: { movedReturnAddress($0, from: register) }),
+           let branch = nextMatch(base, from: lr + 1, limit: lr + poisonBranchWindow, last: last,
+                                  matching: isIndirectBranch) {
+            return (index, lr, branch)
+        }
+
+        return nil
+    }
+
+    private static func nextMatch(_ base: UnsafeMutablePointer<UInt32>, from start: Int,
+                                  limit: Int, last: Int,
+                                  matching predicate: (UInt32) -> Bool) -> Int? {
+        guard start <= last - 1 else { return nil }
+        var cursor = start
+        let upper = min(limit, last - 1)
+        while cursor <= upper {
+            if predicate(base[cursor]) { return cursor }
+            cursor += 1
+        }
+        return nil
     }
 
     /// `add sp, Xn, #0` returns the source register, excluding sp/fp.

@@ -87,7 +87,7 @@ class PlayApp: BaseApp {
             settings.sync()
 
             // Remove legacy ProxyShield.dylib LSEnvironment entry if present.
-            let cleanedProxyShield = PlayTools.installProxyShield(for: url)
+            let cleanedProxyShield = PlayTools.removeLegacyProxyShield(for: url)
 
             // Auto-repair previously installed bundles whose Mach-O binaries were skipped
             // (e.g. executable names containing dots) and remain unconverted.
@@ -142,10 +142,17 @@ class PlayApp: BaseApp {
     }
 
     /// Converts unconverted Mach-O slices and applies the anti-tamper trap guard.
-    /// Runs on every launch so already-installed bundles pick up the guard too.
+    /// The trap scan is cached per binary fingerprint so repeat launches do not
+    /// re-read every Mach-O in the bundle.
     private func repairMachOsIfNeeded() async throws -> Bool {
         self.validMachOs = nil
         let machos = Installer.resolveValidMachOs(self)
+
+        let cachedVersion = settings.settings.machoTrapSchemaVersion
+        let cachedFingerprint = settings.settings.machoScanFingerprint
+        let cachedFingerprintMatches = !cachedFingerprint.isEmpty
+            && cachedFingerprint == Self.machoScanFingerprint(for: machos)
+        let scanNeeded = cachedVersion != Macho.trapSchemaVersion || !cachedFingerprintMatches
 
         var needsBundleResign = false
         var convertedAny = false
@@ -158,13 +165,30 @@ class PlayApp: BaseApp {
                 try Macho.convertMacho(macho)
                 convertedAny = true
             }
-            let patchedTraps = try Macho.neutralizeAntiTamperTraps(at: macho)
-            if patchedTraps > 0 {
-                print("Neutralized \(patchedTraps) anti-tamper trap stub(s) in \(macho.lastPathComponent)")
+            var patchedTraps = 0
+            // A converted slice must always be rescanned, otherwise a fresh
+            // conversion would skip the guard for this launch.
+            if scanNeeded || needsConversion {
+                patchedTraps = try Macho.neutralizeAntiTamperTraps(at: macho)
+                if patchedTraps > 0 {
+                    print("Neutralized \(patchedTraps) anti-tamper trap stub(s) in \(macho.lastPathComponent)")
+                }
             }
             if needsConversion || patchedTraps > 0 {
                 try Shell.signMacho(macho)
                 needsBundleResign = true
+            }
+        }
+
+        if scanNeeded {
+            // Fingerprint is taken after conversion/signing so the next launch sees
+            // the same sizes and timestamps.
+            var updated = settings.settings
+            updated.machoTrapSchemaVersion = Macho.trapSchemaVersion
+            updated.machoScanFingerprint = Self.machoScanFingerprint(for: machos)
+            if updated.machoTrapSchemaVersion != cachedVersion
+                || updated.machoScanFingerprint != cachedFingerprint {
+                settings.settings = updated
             }
         }
 
@@ -175,6 +199,15 @@ class PlayApp: BaseApp {
             try await PlayTools.installInIPA(executable)
         }
         return true
+    }
+
+    private static func machoScanFingerprint(for machos: [URL]) -> String {
+        machos.map { macho in
+            let attributes = try? FileManager.default.attributesOfItem(atPath: macho.path)
+            let size = (attributes?[.size] as? NSNumber)?.int64Value ?? 0
+            let modified = Int((attributes?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0)
+            return "\(macho.lastPathComponent):\(size):\(modified)"
+        }.joined(separator: "|")
     }
 }
 

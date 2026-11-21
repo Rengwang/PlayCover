@@ -55,7 +55,11 @@ struct AppSettingsData: Codable {
     var uiScale: Double = 1.0
     var layoutIdiom: Int = 3
     var sdkShift = false
+    var useNativePlatform = false
     var spoofPowerState = false
+    /// Cached result of the anti-tamper scan: matcher version + per-binary fingerprint.
+    var machoTrapSchemaVersion = 0
+    var machoScanFingerprint = ""
 
     init() {}
 
@@ -103,7 +107,12 @@ struct AppSettingsData: Codable {
         uiScale = decodedUIScale <= 0.0 ? 1.0 : decodedUIScale
         layoutIdiom = try container.decodeIfPresent(Int.self, forKey: .layoutIdiom) ?? 3
         sdkShift = try container.decodeIfPresent(Bool.self, forKey: .sdkShift) ?? false
+        useNativePlatform = try container.decodeIfPresent(Bool.self, forKey: .useNativePlatform) ?? false
         spoofPowerState = try container.decodeIfPresent(Bool.self, forKey: .spoofPowerState) ?? false
+        machoTrapSchemaVersion = try container.decodeIfPresent(Int.self,
+                                                               forKey: .machoTrapSchemaVersion) ?? 0
+        machoScanFingerprint = try container.decodeIfPresent(String.self,
+                                                             forKey: .machoScanFingerprint) ?? ""
     }
 }
 
