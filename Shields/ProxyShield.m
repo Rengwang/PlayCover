@@ -18,6 +18,30 @@
     };
 #endif
 
+// Read the dyld-bound original pointer directly from __DATA_CONST,__interpose so
+// our wrappers emit no __got/__la_symbol_ptr stub for interposed symbols and cannot
+// enter mutual recursion with runtime fishhook/rebind_symbols hooks in apps.
+#ifndef DYLD_INTERPOSE_ORIG
+#define DYLD_INTERPOSE_ORIG(_type, _replacee) \
+    (*(_type const volatile *)&_interpose_##_replacee.replacee)
+#endif
+
+typedef int (*ps_sysctl_fn)(int *, u_int, void *, size_t *, void *, size_t);
+typedef int (*ps_getifaddrs_fn)(struct ifaddrs **);
+typedef void (*ps_freeifaddrs_fn)(struct ifaddrs *);
+
+static CFDictionaryRef pt_CFNetworkCopySystemProxySettings(void);
+static CFArrayRef pt_CFNetworkCopyProxiesForURL(CFURLRef url, CFDictionaryRef proxySettings);
+static int pt_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, void *newp, size_t newlen);
+static int pt_getifaddrs(struct ifaddrs **ifap);
+static void pt_freeifaddrs(struct ifaddrs *ifa);
+
+DYLD_INTERPOSE(pt_CFNetworkCopySystemProxySettings, CFNetworkCopySystemProxySettings)
+DYLD_INTERPOSE(pt_CFNetworkCopyProxiesForURL, CFNetworkCopyProxiesForURL)
+DYLD_INTERPOSE(pt_sysctl, sysctl)
+DYLD_INTERPOSE(pt_getifaddrs, getifaddrs)
+DYLD_INTERPOSE(pt_freeifaddrs, freeifaddrs)
+
 // Hand Catalyst apps the iOS view of the host network: un-VPN'd iOS devices do
 // not expose macOS HTTP/SOCKS system proxies or desktop tunnel interfaces
 // (utun*, ppp*, ipsec*, etc.), which third-party risk-control SDKs inspect.
@@ -93,7 +117,7 @@ static struct ifaddrs *consumeRealIfaddrsHead(struct ifaddrs *returnedHead) {
 }
 
 static int pt_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, void *newp, size_t newlen) {
-    int r = sysctl(name, namelen, oldp, oldlenp, newp, newlen);
+    int r = DYLD_INTERPOSE_ORIG(ps_sysctl_fn, sysctl)(name, namelen, oldp, oldlenp, newp, newlen);
     if (r != 0 || oldp == NULL || name == NULL || oldlenp == NULL) return r;
     if (!(namelen >= 5 && name[0] == CTL_NET && name[1] == PF_ROUTE && name[4] == NET_RT_IFLIST2)) return r;
 
@@ -122,7 +146,7 @@ static int pt_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, void
 }
 
 static int pt_getifaddrs(struct ifaddrs **ifap) {
-    int r = getifaddrs(ifap);
+    int r = DYLD_INTERPOSE_ORIG(ps_getifaddrs_fn, getifaddrs)(ifap);
     if (r != 0 || ifap == NULL || *ifap == NULL) return r;
 
     struct ifaddrs *realHead = *ifap;
@@ -147,7 +171,7 @@ static int pt_getifaddrs(struct ifaddrs **ifap) {
     if (newHead != NULL && newHead != realHead) {
         recordIfaddrsHead(newHead, realHead);
     } else if (newHead == NULL && realHead != NULL) {
-        freeifaddrs(realHead);
+        DYLD_INTERPOSE_ORIG(ps_freeifaddrs_fn, freeifaddrs)(realHead);
     }
     return r;
 }
@@ -155,14 +179,8 @@ static int pt_getifaddrs(struct ifaddrs **ifap) {
 static void pt_freeifaddrs(struct ifaddrs *ifa) {
     if (!ifa) return;
     struct ifaddrs *realHead = consumeRealIfaddrsHead(ifa);
-    freeifaddrs(realHead);
+    DYLD_INTERPOSE_ORIG(ps_freeifaddrs_fn, freeifaddrs)(realHead);
 }
-
-DYLD_INTERPOSE(pt_CFNetworkCopySystemProxySettings, CFNetworkCopySystemProxySettings)
-DYLD_INTERPOSE(pt_CFNetworkCopyProxiesForURL, CFNetworkCopyProxiesForURL)
-DYLD_INTERPOSE(pt_sysctl, sysctl)
-DYLD_INTERPOSE(pt_getifaddrs, getifaddrs)
-DYLD_INTERPOSE(pt_freeifaddrs, freeifaddrs)
 
 __attribute__((constructor)) static void shield_init(void) {
     NSLog(@"[ProxyShield] active pid=%d", getpid());

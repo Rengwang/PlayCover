@@ -362,27 +362,53 @@ class PlayTools {
         NSString(string: "~/Library/Frameworks/PlayTools.framework/ProxyShield.dylib").expandingTildeInPath
     }
 
-    static func installProxyShield(for appURL: URL) {
+    /// Removes a legacy `ProxyShield.dylib` entry from the app's `LSEnvironment`.
+    /// The name is explicit because the function never installs anything: it only
+    /// strips the outdated injection left behind by older PlayCover builds.
+    @discardableResult
+    static func removeLegacyProxyShield(for appURL: URL) -> Bool {
         let plistURL = appURL.appendingPathComponent("Info.plist")
-        guard FileManager.default.fileExists(atPath: proxyShieldPath),
-              let data = try? Data(contentsOf: plistURL),
+        guard let data = try? Data(contentsOf: plistURL),
               let decoded = try? PropertyListSerialization.propertyList(from: data, format: nil),
-              var plist = decoded as? [String: Any] else {
-            return
+              var plist = decoded as? [String: Any],
+              var environment = plist["LSEnvironment"] as? [String: String],
+              let dyldInsert = environment["DYLD_INSERT_LIBRARIES"] else {
+            return false
         }
 
-        var environment = plist["LSEnvironment"] as? [String: String] ?? [:]
-        if environment["DYLD_INSERT_LIBRARIES"] == proxyShieldPath {
-            return
+        let isProxyShield: (String) -> Bool = { entry in
+            entry == proxyShieldPath || entry == "ProxyShield.dylib" || entry.hasSuffix("/ProxyShield.dylib")
         }
-        environment["DYLD_INSERT_LIBRARIES"] = proxyShieldPath
-        plist["LSEnvironment"] = environment
+
+        let entries = dyldInsert.split(separator: ":").map(String.init).filter { !$0.isEmpty }
+        guard entries.contains(where: isProxyShield) else {
+            return false
+        }
+
+        let remaining = entries.filter { !isProxyShield($0) }
+        if remaining.isEmpty {
+            environment.removeValue(forKey: "DYLD_INSERT_LIBRARIES")
+        } else {
+            environment["DYLD_INSERT_LIBRARIES"] = remaining.joined(separator: ":")
+        }
+
+        if environment.isEmpty {
+            plist.removeValue(forKey: "LSEnvironment")
+        } else {
+            plist["LSEnvironment"] = environment
+        }
 
         guard let output = try? PropertyListSerialization.data(
             fromPropertyList: plist, format: .xml, options: 0
         ) else {
-            return
+            return false
         }
-        try? output.write(to: plistURL)
+
+        do {
+            try output.write(to: plistURL)
+            return true
+        } catch {
+            return false
+        }
     }
 }
