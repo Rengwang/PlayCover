@@ -50,16 +50,35 @@ class Macho {
         try replaceVersionCommand(&binary)
         print("Replacing instances of @rpath dylibs...")
         try replaceLibraries(&binary)
+        if try stripRestrictSegment(&binary) {
+            print("Neutralized __RESTRICT segment in MachO")
+        }
+        let trapCount = neutralizeAntiTamperTraps(&binary)
+        if trapCount > 0 {
+            print("Neutralized \(trapCount) anti-tamper self-destruct stub(s) in MachO")
+        }
 
         print("Writing revised MachO...")
         try FileManager.default.removeItem(at: macho)
         try binary.write(to: macho)
+        try macho.setBinaryPosixPermissions(0o755)
     }
 
-    static func replaceLibraries(_ binary: inout Data) throws {
-        let dylibsToReplace = ["libswiftUIKit"]
+    static let iOSSupportSwiftDylibs = [
+        "libswiftUIKit",
+        "libswiftARKit",
+        "libswiftMapKit",
+        "libswiftSceneKit",
+        "libswiftPhotosUI",
+        "libswiftCoreNFC",
+        "libswiftPencilKit",
+        "libswiftWebKit",
+        "libswiftHomeKit",
+        "libswiftPassKit"
+    ]
 
-        for dylib in dylibsToReplace {
+    static func replaceLibraries(_ binary: inout Data) throws {
+        for dylib in iOSSupportSwiftDylibs {
             let rpathDylib = "@rpath/\(dylib).dylib"
             let libDylib = "/System/iOSSupport/usr/lib/swift/\(dylib).dylib"
 
@@ -284,5 +303,315 @@ class Macho {
             return false
         }
         return result
+    }
+}
+
+extension Macho {
+    private static let restrictSegBytes = paddedMachOName("__RESTRICT")
+    private static let restrictSectBytes = paddedMachOName("__restrict")
+    private static let replacementSegBytes = paddedMachOName("__PLAYCVR")
+    private static let replacementSectBytes = paddedMachOName("__playcvr")
+
+    @discardableResult
+    static func stripRestrictSegment(atURL macho: URL) throws -> Bool {
+        var binary = try Data(contentsOf: macho)
+        let modified = try stripRestrictSegment(&binary)
+        if modified {
+            try binary.write(to: macho)
+        }
+        return modified
+    }
+
+    /// Renames any `__RESTRICT` / `__restrict` segment and section names in-place so macOS
+    /// dyld permits `@rpath` expansion and `DYLD_INSERT_LIBRARIES` on ad-hoc signed apps.
+    @discardableResult
+    static func stripRestrictSegment(_ binary: inout Data) throws -> Bool {
+        guard binary.count >= MemoryLayout<UInt32>.size else { return false }
+
+        let magic = binary.extract(UInt32.self)
+        if magic == FAT_MAGIC || magic == FAT_CIGAM {
+            return try stripRestrictSegmentInFat(&binary)
+        }
+        return try stripRestrictSegmentInSlice(&binary, sliceStart: 0, sliceEnd: binary.count)
+    }
+
+    private static func stripRestrictSegmentInFat(_ binary: inout Data) throws -> Bool {
+        var header = binary.extract(fat_header.self)
+        let shouldSwap = header.magic == FAT_CIGAM
+        if shouldSwap { swap_fat_header(&header, NXHostByteOrder()) }
+
+        var offset = MemoryLayout.size(ofValue: header)
+        var modified = false
+        for _ in 0..<header.nfat_arch {
+            guard offset + MemoryLayout<fat_arch>.size <= binary.count else { break }
+            var arch = binary.extract(fat_arch.self, offset: offset)
+            if shouldSwap { swap_fat_arch(&arch, 1, NXHostByteOrder()) }
+            let sliceStart = Int(arch.offset)
+            let sliceEnd = sliceStart + Int(arch.size)
+            if sliceStart >= 0 && sliceEnd <= binary.count && sliceStart < sliceEnd,
+               try stripRestrictSegmentInSlice(&binary, sliceStart: sliceStart, sliceEnd: sliceEnd) {
+                modified = true
+            }
+            offset += MemoryLayout<fat_arch>.size
+        }
+        return modified
+    }
+
+    private static func stripRestrictSegmentInSlice(
+        _ binary: inout Data, sliceStart: Int, sliceEnd: Int
+    ) throws -> Bool {
+        let headerSize = MemoryLayout<mach_header_64>.size
+        guard sliceEnd - sliceStart >= headerSize else { return false }
+        var header = binary.extract(mach_header_64.self, offset: sliceStart)
+        let shouldSwap = header.magic == MH_CIGAM_64
+        guard header.magic == MH_MAGIC_64 || shouldSwap else { return false }
+        if shouldSwap { swap_mach_header_64(&header, NXHostByteOrder()) }
+        let commandsEnd = sliceStart + headerSize + Int(header.sizeofcmds)
+        guard commandsEnd <= sliceEnd && commandsEnd > sliceStart + headerSize else { return false }
+        var offset = sliceStart + headerSize
+        var modified = false
+        for _ in 0..<header.ncmds {
+            guard offset + MemoryLayout<load_command>.size <= commandsEnd else { break }
+            let loadCommand = binary.extract(load_command.self, offset: offset,
+                                             swap: shouldSwap ? swap_load_command : nil)
+            let commandEnd = offset + Int(loadCommand.cmdsize)
+            guard commandEnd <= commandsEnd && commandEnd > offset else { break }
+            if loadCommand.cmd == UInt32(LC_SEGMENT_64),
+               offset + MemoryLayout<segment_command_64>.size <= commandEnd,
+               binary[(offset + 8)..<(offset + 24)] == restrictSegBytes {
+                binary.replaceSubrange((offset + 8)..<(offset + 24), with: replacementSegBytes)
+                let seg = binary.extract(segment_command_64.self, offset: offset,
+                                         swap: shouldSwap ? swap_segment_command_64 : nil)
+                renameRestrictSections(in: &binary, segOffset: offset, commandEnd: commandEnd, nsects: Int(seg.nsects))
+                modified = true
+            }
+            offset = commandEnd
+        }
+        return modified
+    }
+
+    private static func renameRestrictSections(in binary: inout Data, segOffset: Int, commandEnd: Int, nsects: Int) {
+        var sectOffset = segOffset + MemoryLayout<segment_command_64>.size
+        let sectSize = MemoryLayout<section_64>.size
+        for _ in 0..<nsects {
+            guard sectOffset + sectSize <= commandEnd else { break }
+            if binary[sectOffset..<(sectOffset + 16)] == restrictSectBytes {
+                binary.replaceSubrange(sectOffset..<(sectOffset + 16), with: replacementSectBytes)
+            }
+            if binary[(sectOffset + 16)..<(sectOffset + 32)] == restrictSegBytes {
+                binary.replaceSubrange((sectOffset + 16)..<(sectOffset + 32), with: replacementSegBytes)
+            }
+            sectOffset += sectSize
+        }
+    }
+
+    private static func paddedMachOName(_ name: String) -> Data {
+        var bytes = Data(name.utf8.prefix(16))
+        if bytes.count < 16 { bytes.append(Data(count: 16 - bytes.count)) }
+        return bytes
+    }
+}
+
+// MARK: - Anti-tamper self-destruct trap guard
+//
+// Hardening SDKs (mPaaS SecurityGuard / VMP and relatives) run their integrity
+// verdict on a background queue and, when it fails, execute a "poison the
+// frame" sequence:
+//
+//     mov sp,  Xn      ; add sp, Xn, #0     - stack pointer := captured value
+//     mov x30, Xn      ; orr x30, xzr, Xn   - return address := same value
+//     ...
+//     br  Xm           ; jump to a fixed, unmapped address below 4 GiB
+//
+// Register numbers and the surrounding instructions vary between builds and
+// between modules, so the matcher keys on the trio instead of exact instruction
+// words: any `mov sp, Xn` followed within a few instructions by `mov x30, Xn`
+// (same register) and then an indirect branch is a self-destruct trampoline.
+//
+// All three instructions are replaced with `nop`, so the block simply falls
+// through and returns through the `ret` padding those stubs are built with.
+// Nothing else in the app is touched, and the patch is idempotent.
+extension Macho {
+    private static let instrNop: UInt32 = 0xD503_201F
+    private static let poisonPairWindow = 8   // mov sp -> mov x30
+    private static let poisonBranchWindow = 24 // mov x30 -> br
+
+    /// Patches every self-destruct stub found in `macho`.
+    /// Returns the number of patched stubs (0 when the app has none).
+    @discardableResult
+    static func neutralizeAntiTamperTraps(at macho: URL) throws -> Int {
+        var binary = try Data(contentsOf: macho)
+        let patched = neutralizeAntiTamperTraps(&binary)
+        guard patched > 0 else { return 0 }
+        try binary.write(to: macho)
+        return patched
+    }
+
+    @discardableResult
+    static func neutralizeAntiTamperTraps(_ binary: inout Data) -> Int {
+        guard binary.count >= MemoryLayout<UInt32>.size else { return 0 }
+        let magic = binary.extract(UInt32.self)
+        if magic == FAT_MAGIC || magic == FAT_CIGAM {
+            return patchTrapsInFat(&binary)
+        }
+        return patchTrapsInSlice(&binary, sliceStart: 0, sliceEnd: binary.count)
+    }
+
+    private static func patchTrapsInFat(_ binary: inout Data) -> Int {
+        var header = binary.extract(fat_header.self)
+        let shouldSwap = header.magic == FAT_CIGAM
+        if shouldSwap { swap_fat_header(&header, NXHostByteOrder()) }
+
+        var offset = MemoryLayout.size(ofValue: header)
+        var patched = 0
+        for _ in 0..<header.nfat_arch {
+            guard offset + MemoryLayout<fat_arch>.size <= binary.count else { break }
+            var arch = binary.extract(fat_arch.self, offset: offset)
+            if shouldSwap { swap_fat_arch(&arch, 1, NXHostByteOrder()) }
+            let sliceStart = Int(arch.offset)
+            let sliceEnd = sliceStart + Int(arch.size)
+            if sliceStart >= 0 && sliceEnd <= binary.count && sliceStart < sliceEnd {
+                patched += patchTrapsInSlice(&binary, sliceStart: sliceStart, sliceEnd: sliceEnd)
+            }
+            offset += MemoryLayout<fat_arch>.size
+        }
+        return patched
+    }
+
+    private static func patchTrapsInSlice(_ binary: inout Data, sliceStart: Int, sliceEnd: Int) -> Int {
+        let headerSize = MemoryLayout<mach_header_64>.size
+        guard sliceEnd - sliceStart >= headerSize else { return 0 }
+
+        var header = binary.extract(mach_header_64.self, offset: sliceStart)
+        let shouldSwap = header.magic == MH_CIGAM_64
+        guard header.magic == MH_MAGIC_64 || shouldSwap else { return 0 }
+        if shouldSwap { swap_mach_header_64(&header, NXHostByteOrder()) }
+
+        let commandsStart = sliceStart + headerSize
+        let commandsEnd = commandsStart + Int(header.sizeofcmds)
+        guard commandsEnd <= sliceEnd else { return 0 }
+
+        var textStart = -1
+        var textEnd = -1
+        var offset = commandsStart
+        for _ in 0..<header.ncmds {
+            guard offset + MemoryLayout<load_command>.size <= commandsEnd else { break }
+            let loadCommand = binary.extract(load_command.self, offset: offset,
+                                             swap: shouldSwap ? swap_load_command : nil)
+            let commandEnd = offset + Int(loadCommand.cmdsize)
+            guard commandEnd <= commandsEnd && commandEnd > offset else { break }
+
+            if loadCommand.cmd == UInt32(LC_SEGMENT_64),
+               offset + MemoryLayout<segment_command_64>.size <= commandEnd,
+               binary[(offset + 8)..<(offset + 24)].starts(with: Data("__TEXT".utf8)) {
+                let segment = binary.extract(segment_command_64.self, offset: offset,
+                                             swap: shouldSwap ? swap_segment_command_64 : nil)
+                var sectionOffset = offset + MemoryLayout<segment_command_64>.size
+                for _ in 0..<Int(segment.nsects) {
+                    let sectionSize = MemoryLayout<section_64>.size
+                    guard sectionOffset + sectionSize <= commandEnd else { break }
+                    let sectionName = binary[sectionOffset..<(sectionOffset + 16)]
+                    let rawSize = readU64(binary, offset: sectionOffset + 40, swap: shouldSwap)
+                    let rawOffset = readU32(binary, offset: sectionOffset + 48, swap: shouldSwap)
+                    if sectionName.starts(with: Data("__text".utf8)) {
+                        let start = sliceStart + Int(rawOffset)
+                        let end = start + Int(rawSize)
+                        if start >= sliceStart && end <= sliceEnd && start < end {
+                            textStart = start
+                            textEnd = end
+                        }
+                    }
+                    sectionOffset += sectionSize
+                }
+            }
+            offset = commandEnd
+        }
+
+        // Fall back to the whole slice when the section table is unusual.
+        if textStart < 0 {
+            textStart = sliceStart + headerSize
+            textEnd = sliceEnd
+        }
+
+        let start = textStart & ~3
+        let end = textEnd & ~3
+        guard end - start >= 16 else { return 0 }
+
+        var patched = 0
+        binary.withUnsafeMutableBytes { raw in
+            guard let base = raw.baseAddress?.assumingMemoryBound(to: UInt32.self) else { return }
+            let last = end / 4
+            var index = start / 4
+            while index < last {
+                guard let spRegister = poisonedStackPointer(base[index]) else { index += 1; continue }
+
+                // mov x30, <same register> a few instructions later
+                var lrIndex = -1
+                let pairLimit = min(index + poisonPairWindow, last - 1)
+                var cursor = index + 1
+                while cursor <= pairLimit {
+                    if movedReturnAddress(base[cursor], from: spRegister) {
+                        lrIndex = cursor
+                        break
+                    }
+                    cursor += 1
+                }
+                guard lrIndex > 0 else { index += 1; continue }
+
+                // indirect branch shortly after
+                var branchIndex = -1
+                let branchLimit = min(lrIndex + poisonBranchWindow, last - 1)
+                cursor = lrIndex + 1
+                while cursor <= branchLimit {
+                    if isIndirectBranch(base[cursor]) {
+                        branchIndex = cursor
+                        break
+                    }
+                    cursor += 1
+                }
+                guard branchIndex > 0 else { index += 1; continue }
+
+                base[index] = instrNop
+                base[lrIndex] = instrNop
+                base[branchIndex] = instrNop
+                patched += 1
+                index = branchIndex + 1
+            }
+        }
+        return patched
+    }
+
+    /// `add sp, Xn, #0` returns the source register, excluding sp/fp.
+    private static func poisonedStackPointer(_ word: UInt32) -> Int? {
+        guard (word & 0xFFFF_FC00) == 0x9100_0000 else { return nil }
+        let register = Int((word >> 5) & 0x1F)
+        guard register != 29 && register != 31 else { return nil }
+        return register
+    }
+
+    /// `orr x30, xzr, Xn` - identical source register as the poisoned sp.
+    private static func movedReturnAddress(_ word: UInt32, from register: Int) -> Bool {
+        guard (word & 0xFFE0_FFFF) == 0xAA00_03FE else { return false }
+        return Int((word >> 16) & 0x1F) == register
+    }
+
+    /// `br Xm` (register branch, not `blr`).
+    private static func isIndirectBranch(_ word: UInt32) -> Bool {
+        (word & 0xFFFF_FC1F) == 0xD61F_0000
+    }
+
+    private static func readU32(_ binary: Data, offset: Int, swap: Bool) -> UInt32 {
+        guard offset + 4 <= binary.count else { return 0 }
+        let value = UInt32(binary[offset])
+            | UInt32(binary[offset + 1]) << 8
+            | UInt32(binary[offset + 2]) << 16
+            | UInt32(binary[offset + 3]) << 24
+        return swap ? value.byteSwapped : value
+    }
+
+    private static func readU64(_ binary: Data, offset: Int, swap: Bool) -> UInt64 {
+        let low = UInt64(readU32(binary, offset: offset, swap: swap))
+        let high = UInt64(readU32(binary, offset: offset + 4, swap: swap))
+        return (high << 32) | low
     }
 }

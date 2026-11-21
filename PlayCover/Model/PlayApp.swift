@@ -71,6 +71,7 @@ class PlayApp: BaseApp {
     func launch() async {
         do {
             isStarting = true
+            defer { isStarting = false }
 
             if prohibitedToPlay {
                 await clearAllCache()
@@ -85,6 +86,13 @@ class PlayApp: BaseApp {
 
             settings.sync()
 
+            // Remove legacy ProxyShield.dylib LSEnvironment entry if present.
+            let cleanedProxyShield = PlayTools.installProxyShield(for: url)
+
+            // Auto-repair previously installed bundles whose Mach-O binaries were skipped
+            // (e.g. executable names containing dots) and remain unconverted.
+            let didRepairMacho = try await repairMachOsIfNeeded()
+
             // Install PlugIns/localizations before signing so the bundle is fully
             // assembled before its signature is sealed over its contents.
             // If the app does not have PlayTools, do not install PlugIns
@@ -92,14 +100,13 @@ class PlayApp: BaseApp {
                 try PlayTools.installPluginInIPA(url)
             }
 
-            // Hand every app the iOS view of the network: an iOS build cannot see the
-            // host's system proxy, but a Catalyst build can - and risk-control SDKs treat
-            // that as a red flag. The shield is a tiny dylib shipped inside
-            // PlayTools.framework; it is injected through LSEnvironment because
-            // NSWorkspace gives us no way to pass an environment to the launched app.
-            PlayTools.installProxyShield(for: url)
+            // Neutralize any __RESTRICT/__restrict segment in place so dyld allows
+            // @rpath expansion and DYLD_INSERT_LIBRARIES on macOS even for previously
+            // installed bundles.
+            let strippedRestrict = (try? Macho.stripRestrictSegment(atURL: executable)) ?? false
 
-            if try !Entitlements.areEntitlementsValid(app: self) {
+            if try cleanedProxyShield || didRepairMacho || strippedRestrict
+                || !Entitlements.areEntitlementsValid(app: self) {
                 sign()
             }
 
@@ -129,10 +136,45 @@ class PlayApp: BaseApp {
                     runAppExec() // Splitting to reduce complexity
                 }
             }
-            isStarting = false
         } catch {
             Log.shared.error(error)
         }
+    }
+
+    /// Converts unconverted Mach-O slices and applies the anti-tamper trap guard.
+    /// Runs on every launch so already-installed bundles pick up the guard too.
+    private func repairMachOsIfNeeded() async throws -> Bool {
+        self.validMachOs = nil
+        let machos = Installer.resolveValidMachOs(self)
+
+        var needsBundleResign = false
+        var convertedAny = false
+        for macho in machos {
+            if try Macho.isMachoEncrypted(atURL: macho) {
+                throw PlayCoverError.appEncrypted
+            }
+            let needsConversion = try !Macho.isMachoValidArch(macho)
+            if needsConversion {
+                try Macho.convertMacho(macho)
+                convertedAny = true
+            }
+            let patchedTraps = try Macho.neutralizeAntiTamperTraps(at: macho)
+            if patchedTraps > 0 {
+                print("Neutralized \(patchedTraps) anti-tamper trap stub(s) in \(macho.lastPathComponent)")
+            }
+            if needsConversion || patchedTraps > 0 {
+                try Shell.signMacho(macho)
+                needsBundleResign = true
+            }
+        }
+
+        guard needsBundleResign || convertedAny else { return false }
+
+        try executable.setBinaryPosixPermissions(0o755)
+        if !hasPlayTools() {
+            try await PlayTools.installInIPA(executable)
+        }
+        return true
     }
 }
 
@@ -186,7 +228,10 @@ extension PlayApp {
             at: aliasURL,
             configuration: config,
             completionHandler: { runningApp, error in
-                guard error == nil else { return }
+                if let error = error {
+                    Log.shared.error(error)
+                    return
+                }
                 let shouldPreventSleep = self.settings.settings.disableTimeout
                 let shouldLockKeyCover = KeyCover.shared.isKeyCoverEnabled() || self.sessionDisableKeychain
 
