@@ -292,6 +292,12 @@
 "settings.toggle.blockSleepSpamming.help" = "Prevent the app from spamming the usleep() syscall which may cause resource exhaustion";
 "settings.toggle.ignoreUnityKeyboardInitializationError" = "Ignore Unity keyboard initialization error";
 "settings.toggle.ignoreUnityKeyboardInitializationError.help" = "Prevent a crash caused by the assertion failure \"[KeyboardDelegate Initialize] called after creating keyboard\"";
+"settings.usageMode" = "Usage Mode";
+"settings.usageMode.app" = "App Mode (Low Power)";
+"settings.usageMode.game" = "Game Mode";
+"settings.usageMode.help" = "App Mode disables keymapping, Discord Rich Presence, battery/thermal spoofing, and display-sleep blocking for minimum idle wakeups and power draw. Game Mode enables keymapping and battery/thermal spoofing.";
+"settings.toggle.spoofPowerState" = "Spoof Battery & Thermal State (Game Mode)";
+"settings.toggle.spoofPowerState.help" = "Report 100% battery, nominal thermal state, and Low Power Mode off to the app. Keep OFF so apps respect macOS Low Power Mode and thermal management to save power. Restart app to apply.";
 
 
 "configSigning.header" = "Configure Package Signing";

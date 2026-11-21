@@ -10,7 +10,7 @@ import UniformTypeIdentifiers
 struct AppSettingsData: Codable {
     var bundleIdentifier: String = ""
 
-    var keymapping = true
+    var keymapping = false
     var sensitivity: Float = 50
 
     var disableTimeout = false
@@ -55,6 +55,7 @@ struct AppSettingsData: Codable {
     var uiScale: Double = 1.0
     var layoutIdiom: Int = 3
     var sdkShift = false
+    var spoofPowerState = false
 
     init() {}
 
@@ -62,7 +63,7 @@ struct AppSettingsData: Codable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         bundleIdentifier = try container.decodeIfPresent(String.self, forKey: .bundleIdentifier) ?? ""
-        keymapping = try container.decodeIfPresent(Bool.self, forKey: .keymapping) ?? true
+        keymapping = try container.decodeIfPresent(Bool.self, forKey: .keymapping) ?? false
         sensitivity = try container.decodeIfPresent(Float.self, forKey: .sensitivity) ?? 50
         disableTimeout = try container.decodeIfPresent(Bool.self, forKey: .disableTimeout) ?? false
         displayRotation = try container.decodeIfPresent(Int.self, forKey: .displayRotation) ?? 0
@@ -102,6 +103,7 @@ struct AppSettingsData: Codable {
         uiScale = decodedUIScale <= 0.0 ? 1.0 : decodedUIScale
         layoutIdiom = try container.decodeIfPresent(Int.self, forKey: .layoutIdiom) ?? 3
         sdkShift = try container.decodeIfPresent(Bool.self, forKey: .sdkShift) ?? false
+        spoofPowerState = try container.decodeIfPresent(Bool.self, forKey: .spoofPowerState) ?? false
     }
 }
 

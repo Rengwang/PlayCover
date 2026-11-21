@@ -65,7 +65,7 @@ class LegacySettings {
             dictionary = from
 
             var settingsData = AppSettingsData()
-            settingsData.keymapping = dictionary["pc.keymapping"] as? Bool ?? true
+            settingsData.keymapping = dictionary["pc.keymapping"] as? Bool ?? false
             settingsData.sensitivity = dictionary["pc.sensivity"] as? Float ?? 50
             settingsData.disableTimeout = dictionary["pc.disableTimeout"] as? Bool ?? false
 

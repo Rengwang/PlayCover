@@ -1,3 +1,4 @@
+// swiftlint:disable file_length
 //
 //  PlayApp.swift
 //  PlayCover
@@ -21,8 +22,14 @@ class PlayApp: BaseApp {
 
     // MARK: - Instance State
     var displaySleepAssertionID: IOPMAssertionID?
+    private var workspaceObservers: [NSObjectProtocol] = []
     public var isStarting = false
     var sessionDisableKeychain: Bool = false
+
+    deinit {
+        cleanupWorkspaceObservers()
+        enableTimeOut()
+    }
 
     // MARK: - Init
     override init(appUrl: URL) {
@@ -180,30 +187,123 @@ extension PlayApp {
             configuration: config,
             completionHandler: { runningApp, error in
                 guard error == nil else { return }
-                // Run a thread loop in the background to handle background tasks
-                Task(priority: .background) {
-                    if let runningApp = runningApp {
-                        while !(runningApp.isTerminated) {
-                            if runningApp.isActive {
-                                self.disableTimeOut()
-                            } else {
-                                self.enableTimeOut()
-                            }
-                            sleep(1)
-                        }
-                        sleep(1)
-                    }
-                    // Things that are run after the app is closed
-                    self.lockKeyCover()
+                let shouldPreventSleep = self.settings.settings.disableTimeout
+                let shouldLockKeyCover = KeyCover.shared.isKeyCoverEnabled() || self.sessionDisableKeychain
+
+                DispatchQueue.main.async {
+                    self.observeRunningApp(
+                        runningApp,
+                        shouldPreventSleep: shouldPreventSleep,
+                        shouldLockKeyCover: shouldLockKeyCover
+                    )
                 }
             }
         )
+    }
+
+    private func observeRunningApp(
+        _ runningApp: NSRunningApplication?,
+        shouldPreventSleep: Bool,
+        shouldLockKeyCover: Bool
+    ) {
+        cleanupWorkspaceObservers()
+        enableTimeOut()
+
+        guard let runningApp = runningApp else {
+            if shouldLockKeyCover {
+                DispatchQueue.global(qos: .background).async { self.lockKeyCover() }
+            }
+            return
+        }
+
+        if runningApp.isTerminated {
+            scheduleKeyCoverLockIfNeeded(shouldLockKeyCover)
+            return
+        }
+
+        // When display-sleep prevention and KeyCover locking are both off,
+        // install zero workspace observers and zero power assertions (0 wakeups/s).
+        guard shouldPreventSleep || shouldLockKeyCover else { return }
+
+        let pid = runningApp.processIdentifier
+        let center = NSWorkspace.shared.notificationCenter
+
+        if shouldPreventSleep {
+            if runningApp.isActive {
+                disableTimeOut()
+            }
+            workspaceObservers.append(
+                addWorkspaceAppObserver(
+                    center: center,
+                    name: NSWorkspace.didActivateApplicationNotification,
+                    pid: pid
+                ) { [weak self] in self?.disableTimeOut() }
+            )
+            workspaceObservers.append(
+                addWorkspaceAppObserver(
+                    center: center,
+                    name: NSWorkspace.didDeactivateApplicationNotification,
+                    pid: pid
+                ) { [weak self] in self?.enableTimeOut() }
+            )
+        }
+
+        workspaceObservers.append(
+            addWorkspaceAppObserver(
+                center: center,
+                name: NSWorkspace.didTerminateApplicationNotification,
+                pid: pid
+            ) { [weak self] in
+                self?.handleObservedAppTerminated(shouldLockKeyCover: shouldLockKeyCover)
+            }
+        )
+
+        // Close the race window if the app already exited before observers attached.
+        if runningApp.isTerminated {
+            handleObservedAppTerminated(shouldLockKeyCover: shouldLockKeyCover)
+        }
+    }
+
+    private func addWorkspaceAppObserver(
+        center: NotificationCenter,
+        name: NSNotification.Name,
+        pid: pid_t,
+        handler: @escaping () -> Void
+    ) -> NSObjectProtocol {
+        center.addObserver(forName: name, object: nil, queue: .main) { notification in
+            guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey]
+                    as? NSRunningApplication,
+                  app.processIdentifier == pid else { return }
+            handler()
+        }
+    }
+
+    private func handleObservedAppTerminated(shouldLockKeyCover: Bool) {
+        enableTimeOut()
+        cleanupWorkspaceObservers()
+        scheduleKeyCoverLockIfNeeded(shouldLockKeyCover)
+    }
+
+    private func scheduleKeyCoverLockIfNeeded(_ shouldLockKeyCover: Bool) {
+        guard shouldLockKeyCover else { return }
+        DispatchQueue.global(qos: .background).asyncAfter(deadline: .now() + 1.0) {
+            self.lockKeyCover()
+        }
     }
 }
 
 // MARK: - Management
 extension PlayApp {
+    private func cleanupWorkspaceObservers() {
+        let center = NSWorkspace.shared.notificationCenter
+        for observer in workspaceObservers {
+            center.removeObserver(observer)
+        }
+        workspaceObservers.removeAll()
+    }
+
     func disableTimeOut() {
+        guard settings.settings.disableTimeout else { return }
         if displaySleepAssertionID != nil { return }
 
         let reason = "PlayCover: \(info.bundleIdentifier) is disabling sleep" as CFString

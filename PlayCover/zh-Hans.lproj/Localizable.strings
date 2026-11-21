@@ -357,6 +357,12 @@
 "settings.picker.layoutIdiom.help" = "为通用 iOS 应用（如 B 站等同时包含手机、iPhone Duo 和 iPad 多套界面的软件）强制指定布局与对应设备身份，重启应用生效。";
 "settings.toggle.sdkShift" = "SDK Shift（强制解锁自由自适应缩放）";
 "settings.toggle.sdkShift.help" = "参考 SDKShift for Duo 思路：运行时向应用提供高版本 Duo SDK（iOS 27.2）标识并解除全屏/单向锁定，使原本固定比例的应用窗口可自由调节大小（在智能自适应/自由调整模式下生效，重启应用生效）。";
+"settings.usageMode" = "运行模式";
+"settings.usageMode.app" = "低功耗应用模式";
+"settings.usageMode.game" = "游戏模式";
+"settings.usageMode.help" = "低功耗应用模式会一键关闭按键映射、Discord 动态、满电/无温控伪装与防息屏，大幅降低后台唤醒与功耗；游戏模式会开启按键映射与满电/无温控伪装。";
+"settings.toggle.spoofPowerState" = "伪装满电与无温控（游戏模式）";
+"settings.toggle.spoofPowerState.help" = "向应用伪装 100% 满电、正常温度且未开启低电量模式。保持关闭可让应用遵循 macOS 低电量模式与系统温控策略以节省电量，重启应用生效。";
 "keycover.masterPassword" = "主密码";
 "button.Enable" = "启用";
 "button.Reset" = "重置";

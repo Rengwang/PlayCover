@@ -148,9 +148,6 @@ struct AppSettingsView: View {
 
 struct KeymappingView: View {
     @Binding var settings: AppSettings
-    @AppStorage("settings.settings.keymapping") private var keymapping = false
-    @AppStorage("settings.settings.noKMOnInput") private var noKMOnInput = false
-    @AppStorage("settings.settings.enableScrollWheel") private var enableScrollWheel = false
     var body: some View {
         ScrollView {
             VStack {
@@ -661,19 +658,47 @@ struct MiscView: View {
     @Binding var hasPlayTools: Bool?
     @Binding var hasAlias: Bool?
     @Binding var task: BlockingTask
-    @AppStorage("settings.settings.discordActivity.enable") private var discordActivity = false
-    @AppStorage("settings.settings.metalHUD") private var metalHUD = false
-    @AppStorage("settings.openWithLLDB") private var openWithLLDB = false
-    @AppStorage("settings.openLLDBWithTerminal") private var openLLDBWithTerminal = false
     @AppStorage("settings.customPluginsWarningShown") private var hasShownCustomPluginWarning = false
     @State var showPopover = false
     @State private var userDylibs: [URL] = []
     @State private var showCustomPluginWarning = false
     var app: PlayApp
     @State var applicationCategoryType: LSApplicationCategoryType
+
+    private var isAppModeActive: Bool {
+        !settings.settings.keymapping
+            && !settings.settings.discordActivity.enable
+            && !settings.settings.spoofPowerState
+            && !settings.settings.disableTimeout
+    }
+
+    private var isGameModeActive: Bool {
+        settings.settings.keymapping && settings.settings.spoofPowerState
+    }
+
     var body: some View {
         ScrollView {
             VStack {
+                HStack {
+                    Text("settings.usageMode")
+                    Spacer()
+                    if isAppModeActive {
+                        Button("settings.usageMode.app") { applyAppModePreset() }
+                            .buttonStyle(.borderedProminent)
+                    } else {
+                        Button("settings.usageMode.app") { applyAppModePreset() }
+                            .buttonStyle(.bordered)
+                    }
+                    if isGameModeActive {
+                        Button("settings.usageMode.game") { applyGameModePreset() }
+                            .buttonStyle(.borderedProminent)
+                    } else {
+                        Button("settings.usageMode.game") { applyGameModePreset() }
+                            .buttonStyle(.bordered)
+                    }
+                }
+                .disabled(!(hasPlayTools ?? true))
+                .help("settings.usageMode.help")
                 HStack {
                     Text("settings.applicationCategoryType")
                     Spacer()
@@ -774,6 +799,13 @@ struct MiscView: View {
                     }
                 }
                 HStack {
+                    Toggle("settings.toggle.spoofPowerState",
+                           isOn: $settings.settings.spoofPowerState)
+                        .disabled(!(hasPlayTools ?? true))
+                        .help("settings.toggle.spoofPowerState.help")
+                    Spacer()
+                }
+                HStack {
                     Toggle("settings.toggle.rootWorkDir", isOn: $settings.settings.rootWorkDir)
                         .disabled(!(hasPlayTools ?? true))
                         .help("settings.toggle.rootWorkDir.help")
@@ -843,6 +875,34 @@ struct MiscView: View {
         } else {
             return false
         }
+    }
+
+    private func applyAppModePreset() {
+        var updated = settings.settings
+        updated.keymapping = false
+        updated.spoofPowerState = false
+        updated.disableTimeout = false
+        let discord = DiscordActivity()
+        discord.enable = false
+        discord.applicationID = updated.discordActivity.applicationID
+        discord.details = updated.discordActivity.details
+        discord.state = updated.discordActivity.state
+        discord.image = updated.discordActivity.image
+        updated.discordActivity = discord
+
+        let current = settings
+        current.settings = updated
+        settings = current
+    }
+
+    private func applyGameModePreset() {
+        var updated = settings.settings
+        updated.keymapping = true
+        updated.spoofPowerState = true
+
+        let current = settings
+        current.settings = updated
+        settings = current
     }
 
 }
