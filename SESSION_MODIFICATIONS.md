@@ -117,3 +117,22 @@
 4. **运行时兼容性与稳定性护栏**
    - `Toucher.swift` 增加空 `keyWindow` 判空保护；`PlayedApple.swift` / `PlayedAppleDB.swift` 补齐默认 `kSecAttrAccessGroup` 与 `PRAGMA user_version` 建表检查。
    - `PlayLoader.m` 增加 libc interpose 原函数快照防互调递归、`CloudKit` 缺失权限安全降级桩、`UINSUIKitTerminationController` 退出超时上限收敛与远程通知重复注册限流；`ProxyShield.m` 在签名前注入以向应用呈现 iOS 标准网络代理/网卡视图。
+
+---
+
+## 七、低功耗「应用模式（App Mode）」默认策略与宿主功耗修复
+
+面向日常非游戏 iOS 应用（B 站、小红书、酷安等）与笔记本续航场景，将默认运行策略升级为低功耗 **App Mode**，同时保留一键切回 **Game Mode** 的能力（配套 `PlayTools` 侧同步停用空载 60–120Hz `CADisplayLink`、消除 `SwordRPC`/SwiftNIO 10 线程泄漏并优化热路径 Hook）：
+
+1. **共享配置默认收敛为低功耗 App Mode**
+   - [`PlayCover/Model/AppSettings.swift`](PlayCover/Model/AppSettings.swift)、[`PlayCover/Model/DiscordActivity.swift`](PlayCover/Model/DiscordActivity.swift)、[`PlayCover/Utils/LegacySettings.swift`](PlayCover/Utils/LegacySettings.swift)
+   - 与 `PlayTools` 对齐默认配置：`keymapping = false`、`discordActivity.enable = false`，新增单应用开关 `spoofPowerState = false`（仅在开启时伪装 100% 满电、正常温控与非低电量模式；关闭时遵循 macOS 低电量模式、系统温控与 App Nap）。
+   - 保留 `layoutIdiom = 3`、`iosDeviceModel = "iPhone19,4"`、`resolution = 7`、`uiScale = 1.0`、`playChain = true`、`rootWorkDir = true` 不变。
+2. **宿主 `PlayApp.runAppExec()` 1 Hz 轮询与无条件防息屏缺陷修复**
+   - [`PlayCover/Model/PlayApp.swift`](PlayCover/Model/PlayApp.swift)
+   - 修复此前忽略 `disableTimeout == false` 而无条件创建 `kIOPMAssertionTypeNoDisplaySleep` 阻止显示器休眠的 Bug（`disableTimeOut()` 增加 `guard settings.settings.disableTimeout`）。
+   - 移除 `while !runningApp.isTerminated { ... sleep(1) }` 1 Hz 阻塞轮询循环，改为事件驱动的 `NSWorkspace.shared.notificationCenter` 监听（`didActivateApplicationNotification` / `didDeactivateApplicationNotification` / `didTerminateApplicationNotification`）：默认关闭防息屏且未启用 KeyCover 时零监听、零唤醒、零电源断言，应用退出与对象销毁时自动清理。
+3. **设置页「运行模式」一键预设与电池/温控伪装开关**
+   - [`PlayCover/Views/AppSettingsView.swift`](PlayCover/Views/AppSettingsView.swift)、[`PlayCover/en.lproj/Localizable.strings`](PlayCover/en.lproj/Localizable.strings)、[`PlayCover/zh-Hans.lproj/Localizable.strings`](PlayCover/zh-Hans.lproj/Localizable.strings)
+   - 在 `MiscView` 顶部新增「运行模式（Usage Mode）」一键切换按钮：**低功耗应用模式**（关闭 `keymapping`、`discordActivity.enable`、`spoofPowerState`、`disableTimeout`）与 **游戏模式**（开启 `keymapping`、`spoofPowerState`）。
+   - 新增独立开关「伪装满电与无温控（游戏模式）」（`spoofPowerState`）及说明提示，并清理 `KeymappingView`/`MiscView` 中未使用的 `@AppStorage` 冗余声明。
