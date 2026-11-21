@@ -208,33 +208,6 @@ public class AppInfo {
         self[string: "CFBundleShortVersionString"] ?? ""
     }
 
-    var primaryIconName: String {
-        if let bundleIconDict = self[dictionary: "CFBundleIcons~ipad"] {
-            if let primaryBundleIconDict: [String: Any] = bundleIconDict["CFBundlePrimaryIcon"] as? [String: Any] {
-                if let bundleIconFiles = primaryBundleIconDict["CFBundleIconFiles"] as? [String] {
-                    let primaryIconName = bundleIconFiles[bundleIconFiles.count - 1]
-                    return primaryIconName
-                }
-            }
-        }
-
-        if let bundleIconDict = self[dictionary: "CFBundleIcons"] {
-            if let primaryBundleIconDict: [String: Any] = bundleIconDict["CFBundlePrimaryIcon"] as? [String: Any] {
-                if let bundleIconFiles = primaryBundleIconDict["CFBundleIconFiles"] as? [String] {
-                    let primaryIconName = bundleIconFiles[bundleIconFiles.count - 1]
-                    return primaryIconName
-                }
-            }
-        }
-
-        if let bundleIconFiles = self[strings: "CFBundleIconFiles"] {
-            let primaryIconName = bundleIconFiles[bundleIconFiles.count - 1]
-            return primaryIconName
-        }
-
-        return "AppIcon"
-    }
-
     var lsEnvironment: [String: String] {
         get {
             if self[dictionary: "LSEnvironment"] == nil {

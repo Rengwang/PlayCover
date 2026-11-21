@@ -38,67 +38,11 @@ class Cacher {
         }
     }
 
-    func resolveLocalIcon(_ app: PlayApp) -> NSImage? {
-        resolveLocalIcon(
-            at: app.url,
-            bundleIdentifier: app.info.bundleIdentifier,
-            bundleVersion: app.info.bundleVersion,
-            primaryIconName: app.info.primaryIconName
-        )
-    }
-
-    func resolveLocalIcon(
-        at url: URL,
-        bundleIdentifier: String,
-        bundleVersion: String,
-        primaryIconName: String
-    ) -> NSImage? {
-        let compareStr = bundleIdentifier + bundleVersion
-        if cache.readString(forKey: compareStr) != nil,
-           let cachedImage = cache.readImage(forKey: bundleIdentifier) {
-            return cachedImage
-        }
-
-        let lock = NSLock()
-        var candidates: [NSImage] = []
-        url.enumerateContents(blocking: true) { file, _ in
-            guard file.lastPathComponent.contains(primaryIconName), let icon = NSImage(contentsOf: file) else {
-                return
-            }
-            lock.lock()
-            candidates.append(icon)
-            lock.unlock()
-        }
-
-        if let assetsExtractor = try? AssetsExtractor(appUrl: url) {
-            candidates.append(contentsOf: assetsExtractor.extractIcons())
-        }
-        let bestResImage = candidates.max { $0.size.height < $1.size.height }
-        cache.write(string: compareStr, forKey: compareStr)
-        if let image = bestResImage { cache.write(image: image, forKey: bundleIdentifier) }
-        return cache.readImage(forKey: bundleIdentifier)
-    }
-
-    func resolveLocalIconData(
-        at url: URL,
-        bundleIdentifier: String,
-        bundleVersion: String,
-        primaryIconName: String
-    ) -> Data? {
-        resolveLocalIcon(
-            at: url,
-            bundleIdentifier: bundleIdentifier,
-            bundleVersion: bundleVersion,
-            primaryIconName: primaryIconName
-        )?.tiffRepresentation
-    }
-
     func getLocalIcon(bundleId: String) -> NSImage? {
-        if let app = AppsVM.shared.apps.first(where: { $0.info.bundleIdentifier == bundleId }) {
-            return cache.readImage(forKey: app.info.bundleIdentifier)
-        } else {
+        guard let app = AppsVM.shared.apps.first(where: { $0.info.bundleIdentifier == bundleId }) else {
             return nil
         }
+        return NSWorkspace.shared.icon(forFile: app.url.path)
     }
 
 }

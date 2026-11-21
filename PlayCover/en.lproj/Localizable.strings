@@ -214,6 +214,8 @@
 "settings.picker.layoutIdiom.pad" = "iPad Layout";
 "settings.picker.layoutIdiom.help" = "Force Universal iOS apps (like Bilibili) to use their iPhone, iPhone Duo (foldable wide), or iPad UI layout and matching device type. Restart app to apply.";
 "settings.toggle.sdkShift" = "SDK Shift (Unlock Free Resizing for Duo)";
+"settings.toggle.nativePlatform" = "Use the native Mac Catalyst platform";
+"settings.toggle.nativePlatform.help" = "Use the system’s Mac Catalyst identity for API availability checks. Restart the app to apply.";
 "settings.toggle.sdkShift.help" = "Inspired by SDKShift for Duo: reports iOS 27.2 SDK metadata to the app at runtime and lifts UIRequiresFullScreen / fixed-aspect scaling locks in Smart Auto-Adapt and Resizable modes so fixed-ratio iPhone apps can resize freely. Restart app to apply.";
 
 "settings.tab.bypasses" = "Bypasses";

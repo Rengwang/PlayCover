@@ -437,6 +437,8 @@ struct GraphicsView: View {
                     Spacer()
                     Toggle("settings.toggle.sdkShift", isOn: $settings.settings.sdkShift)
                         .help("settings.toggle.sdkShift.help")
+                    Toggle("settings.toggle.nativePlatform", isOn: $settings.settings.useNativePlatform)
+                        .help("settings.toggle.nativePlatform.help")
                     Spacer()
                 }
                 Spacer()

@@ -356,6 +356,8 @@
 "settings.picker.layoutIdiom.pad" = "iPad 布局 (iPad)";
 "settings.picker.layoutIdiom.help" = "为通用 iOS 应用（如 B 站等同时包含手机、iPhone Duo 和 iPad 多套界面的软件）强制指定布局与对应设备身份，重启应用生效。";
 "settings.toggle.sdkShift" = "SDK Shift（强制解锁自由自适应缩放）";
+"settings.toggle.nativePlatform" = "使用原生 Mac Catalyst 平台";
+"settings.toggle.nativePlatform.help" = "让应用使用系统真实的 Mac Catalyst 平台身份判断 API 是否可用。重启应用后生效。";
 "settings.toggle.sdkShift.help" = "参考 SDKShift for Duo 思路：运行时向应用提供高版本 Duo SDK（iOS 27.2）标识并解除全屏/单向锁定，使原本固定比例的应用窗口可自由调节大小（在智能自适应/自由调整模式下生效，重启应用生效）。";
 "settings.usageMode" = "运行模式";
 "settings.usageMode.app" = "低功耗应用模式";

@@ -120,34 +120,23 @@ struct PlayAppConditionalView: View {
     @Binding var showStartingProgress: Bool
 
     @State var app: PlayApp
-    @State var appIcon: NSImage?
     @State var isList: Bool
     @State var hasPlayTools: Bool?
+
+    private var appIcon: some View {
+        Image(nsImage: NSWorkspace.shared.icon(forFile: app.url.path))
+            .resizable()
+            .scaledToFit()
+    }
 
     var body: some View {
         Group {
             if isList {
                 HStack(alignment: .center, spacing: 0) {
-                    Group {
-                        if let image = appIcon {
-                            Image(nsImage: image)
-                                .resizable()
-                                .aspectRatio(contentMode: .fit)
-                        } else {
-                            Rectangle()
-                                 .fill(.regularMaterial)
-                                 .overlay {
-                                     ProgressView()
-                                         .progressViewStyle(.circular)
-                                         .controlSize(.small)
-                                 }
-                        }
-                    }
-                    .frame(width: 30, height: 30)
-                    .cornerRadius(7.5)
-                    .shadow(radius: 1)
-                    .padding(.horizontal, 15)
-                    .padding(.vertical, 5)
+                    appIcon
+                        .frame(width: 30, height: 30)
+                        .padding(.horizontal, 15)
+                        .padding(.vertical, 5)
 
                     Text(app.name)
                         .foregroundColor(selected?.url == app.url ?
@@ -176,23 +165,8 @@ struct PlayAppConditionalView: View {
                     )
             } else {
                 LazyVStack {
-                    Group {
-                        if let image = appIcon {
-                            Image(nsImage: image)
-                                .resizable()
-                                .aspectRatio(contentMode: .fit)
-                        } else {
-                            Rectangle()
-                                 .fill(.regularMaterial)
-                                 .overlay {
-                                     ProgressView()
-                                         .progressViewStyle(.circular)
-                                 }
-                        }
-                    }
-                    .cornerRadius(15)
-                    .shadow(radius: 1)
-                    .frame(width: 60, height: 60)
+                    appIcon
+                        .frame(width: 60, height: 60)
 
                     let noPlayToolsWarning = Text(
                         (hasPlayTools ?? true) ? "" : "\(Image(systemName: "exclamationmark.triangle"))  "
@@ -223,21 +197,6 @@ struct PlayAppConditionalView: View {
                 }
                 .frame(width: 130, height: 130)
             }
-        }
-        .task(priority: .userInitiated) {
-            let appURL = app.url
-            let bundleIdentifier = app.info.bundleIdentifier
-            let bundleVersion = app.info.bundleVersion
-            let primaryIconName = app.info.primaryIconName
-            let iconData = await Task.detached(priority: .utility) {
-                Cacher.shared.resolveLocalIconData(
-                    at: appURL,
-                    bundleIdentifier: bundleIdentifier,
-                    bundleVersion: bundleVersion,
-                    primaryIconName: primaryIconName
-                )
-            }.value
-            appIcon = iconData.flatMap(NSImage.init(data:))
         }
         .task(priority: .background) {
             hasPlayTools = app.hasPlayTools()
