@@ -139,13 +139,14 @@
 
 ---
 
-## 八、加固 App 消桩补丁的匹配补全、扫描缓存与命名/构建修正（2026-11-22）
+## 八、加固 App 消桩匹配器纠正、扫描缓存与命名修正（2026-11-22）
 
-1. **双向指令顺序匹配（`PlayCover/Utils/Macho.swift`）**
-   - 原匹配器只接受 `mov sp, Xn → mov x30, Xn → br Xm`，漏掉了 `mov x30, Xn → mov sp, Xn → br Xm` 变体。
-   - 新增 `locateTrap` 同时匹配两种顺序：第一条路径保持原有宽松匹配；第二条路径要求 `add sp, Xn, #0` 的 `Rd == 31`（`strictStackPointerSource`），避免把普通 `add Xd, Xn, #0` 误判为自毁桩。
-   - 新增 `Macho.trapSchemaVersion = 2`，作为扫描结果缓存的失效版本号。
-   - **实测**：中国移动 12.5.7 命中数由 37 → **38**；`0x7445974` 落盘为 `1f2003d5`（nop）；冷启动 20 秒无 `EXC_BAD_ACCESS`。
+1. **消桩匹配器纠正（`PlayCover/Utils/Macho.swift`）**
+   - 上一版新增的「反向顺序」分支把首指令写成了 `strictStackPointerSource(base[index])`，两条条件都在匹配 `mov sp, Xn`，从未真正检查 `mov x30, Xn`；多出的 1 处命中属于 `mov sp` 邻近的误判。
+   - 真实的反向形态是 `mov x29, Xn → mov x30, Xn → mov sp, Xn → br x16`（例：`ChinaMobile+0x1000094d8`）。在未改写的原始二进制上实测该形态命中 **3,337 处（中国移动 12.5.7）/ 4,755 处（工商银行）**——同一形态也被混淆器当作填充/诱饵大量插入，无法与真实 fail block 区分。
+   - 结论：**不再自动改写该顺序**，只保留已验证有效的 `mov sp, Xn → mov x30, Xn → br Xm` 路径，避免在未知上下文中把成千上万条 `mov sp` 改成 `nop`。区分诱饵与真实桩需要阶段 0 的运行期证据。
+   - `trapSchemaVersion` 提升到 `3`，使旧扫描缓存失效。
+   - **复测**：中国移动 12.5.7 重装命中 37 处，`0x7445974` 落盘为 `1f2003d5`（nop）；三款 App 冷启动 16 秒均无 `EXC_BAD_ACCESS`（工行改为自身 `exit(0)`，见下）。
 
 2. **冷启动扫描缓存（`PlayCover/Model/PlayApp.swift`、`Model/AppSettings.swift`）**
    - `repairMachOsIfNeeded()` 不再每次冷启动读全量 Mach-O：按「主程序/Frameworks 的 path + size + mtime」生成指纹，连同 `trapSchemaVersion` 存入该 App 的设置 plist（`machoTrapSchemaVersion` / `machoScanFingerprint`）。
@@ -166,3 +167,17 @@
      ```
    - `PlayTools.xcframework` 需同时包含 `ios-arm64` 与 `ios-arm64-maccatalyst` 两个切片；仅 iOS 切片会导致 `incompatible platform (have 'iOS', need 'macCatalyst')`。
    - `AKInterface.bundle` 必须是 macOS 布局（仅 `Contents/`）；根目录残留 `Info.plist` 会让 `codesign --deep` 报 `unsealed contents present in the bundle root`，进而使 PlayCover 的 Sparkle 签名阶段整体失败。
+
+---
+
+## 九、统一构建链：双切片 xcframework 与 AKInterface 布局（2026-11-22）
+
+`./sync_upstream.sh build` 现在是唯一入口，不再依赖手工命令：
+
+1. `PlayTools`（`-sdk iphoneos`）与 `AKInterface`（`-sdk macosx`）分别构建。
+2. `PlayTools` 追加 Mac Catalyst 切片，必须走 `-scheme` + `-destination 'platform=macOS,variant=Mac Catalyst'`（`-target` 不会带 `EFFECTIVE_PLATFORM_NAME=-maccatalyst`）。
+3. `install_ak_bundle()` 把 macOS 布局的 `AKInterface.bundle` 写进两个切片的 `PlugIns/`，并删除根目录遗留的 `Info.plist`——否则 `codesign --deep` 报 `unsealed contents present in the bundle root`，PlayCover 的 Sparkle 签名阶段会整段失败。
+4. `xcodebuild -create-xcframework` 在本机偶尔只写 `Info.plist` 不落切片，`ensure_xcframework_slice()` 会补拷 `ios-arm64` 与 `ios-arm64-maccatalyst`。
+5. 构建后删除旧的 `PlayCover.app` 再重编，避免 Xcode 复用上一次的产品。
+
+**注意**：`PlayCover.xcodeproj` 的 `FRAMEWORK_SEARCH_PATHS` 仍指向 `PlayTools.xcframework/ios-arm64/...`。这是刻意保留的：宿主是 macOS App，直接链接 `maccatalyst` 切片会因平台不匹配链接失败，现有做法是在拷贝后由 `vtool -set-build-version maccatalyst` 改写平台。若改为链接 catalyst 切片，需要先验证链接器行为。
