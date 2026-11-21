@@ -136,3 +136,33 @@
    - [`PlayCover/Views/AppSettingsView.swift`](PlayCover/Views/AppSettingsView.swift)、[`PlayCover/en.lproj/Localizable.strings`](PlayCover/en.lproj/Localizable.strings)、[`PlayCover/zh-Hans.lproj/Localizable.strings`](PlayCover/zh-Hans.lproj/Localizable.strings)
    - 在 `MiscView` 顶部新增「运行模式（Usage Mode）」一键切换按钮：**低功耗应用模式**（关闭 `keymapping`、`discordActivity.enable`、`spoofPowerState`、`disableTimeout`）与 **游戏模式**（开启 `keymapping`、`spoofPowerState`）。
    - 新增独立开关「伪装满电与无温控（游戏模式）」（`spoofPowerState`）及说明提示，并清理 `KeymappingView`/`MiscView` 中未使用的 `@AppStorage` 冗余声明。
+
+---
+
+## 八、加固 App 消桩补丁的匹配补全、扫描缓存与命名/构建修正（2026-11-22）
+
+1. **双向指令顺序匹配（`PlayCover/Utils/Macho.swift`）**
+   - 原匹配器只接受 `mov sp, Xn → mov x30, Xn → br Xm`，漏掉了 `mov x30, Xn → mov sp, Xn → br Xm` 变体。
+   - 新增 `locateTrap` 同时匹配两种顺序：第一条路径保持原有宽松匹配；第二条路径要求 `add sp, Xn, #0` 的 `Rd == 31`（`strictStackPointerSource`），避免把普通 `add Xd, Xn, #0` 误判为自毁桩。
+   - 新增 `Macho.trapSchemaVersion = 2`，作为扫描结果缓存的失效版本号。
+   - **实测**：中国移动 12.5.7 命中数由 37 → **38**；`0x7445974` 落盘为 `1f2003d5`（nop）；冷启动 20 秒无 `EXC_BAD_ACCESS`。
+
+2. **冷启动扫描缓存（`PlayCover/Model/PlayApp.swift`、`Model/AppSettings.swift`）**
+   - `repairMachOsIfNeeded()` 不再每次冷启动读全量 Mach-O：按「主程序/Frameworks 的 path + size + mtime」生成指纹，连同 `trapSchemaVersion` 存入该 App 的设置 plist（`machoTrapSchemaVersion` / `machoScanFingerprint`）。
+   - 指纹一致且版本一致时跳过消桩扫描；发生 Mach-O 转换的切片强制重扫；转换/签名后再计算指纹，避免下次启动失配。
+   - 加密检测与架构校验保留，不受缓存影响。
+
+3. **命名修正（`PlayCover/Utils/PlayTools.swift`、`Model/PlayApp.swift`）**
+   - `installProxyShield(for:)` 实际行为是**移除**旧的 `ProxyShield.dylib` 注入项，更名为 `removeLegacyProxyShield(for:)`，调用点同步更新。
+
+4. **Catalyst 构建链修复**
+   - `PlayTools/Controls/PTFakeTouch/NSObject+Swizzle.m`：`hook_setCurrentSubscription:` 的参数由 `VSSubscription *` 改为 `id`。该类型在 Mac Catalyst 不存在，导致整个 Catalyst 目标编译失败；改为运行时按类名 swizzle 后，Catalyst 与 iOS 共用同一份代码。
+   - Catalyst 目标的正确构建方式（`-target` 不会带入 `EFFECTIVE_PLATFORM_NAME`）：
+     ```bash
+     xcodebuild -project PlayTools/PlayTools.xcodeproj -scheme PlayTools -configuration Release \
+       -destination 'platform=macOS,variant=Mac Catalyst' \
+       SYMROOT=$PWD/build/PlayToolsCatalyst OBJROOT=$PWD/build/PlayToolsCatalyst \
+       CODE_SIGN_IDENTITY="-" CODE_SIGNING_ALLOWED=NO build
+     ```
+   - `PlayTools.xcframework` 需同时包含 `ios-arm64` 与 `ios-arm64-maccatalyst` 两个切片；仅 iOS 切片会导致 `incompatible platform (have 'iOS', need 'macCatalyst')`。
+   - `AKInterface.bundle` 必须是 macOS 布局（仅 `Contents/`）；根目录残留 `Info.plist` 会让 `codesign --deep` 报 `unsealed contents present in the bundle root`，进而使 PlayCover 的 Sparkle 签名阶段整体失败。
