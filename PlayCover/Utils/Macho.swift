@@ -7,6 +7,9 @@ import Foundation
 
 class Macho {
     static func stripBinary(_ binary: inout Data) throws {
+        guard binary.count >= MemoryLayout<fat_header>.size else {
+            throw PlayCoverError.appCorrupted
+        }
         var header = binary.extract(fat_header.self)
         var offset = MemoryLayout.size(ofValue: header)
         let shouldSwap = header.magic == FAT_CIGAM
@@ -17,6 +20,10 @@ class Macho {
                 swap_fat_header(&header, NXHostByteOrder())
             }
 
+            let archSize = MemoryLayout<fat_arch>.size
+            guard header.nfat_arch > 0, Int(header.nfat_arch) <= (binary.count - offset) / archSize else {
+                throw PlayCoverError.appCorrupted
+            }
             for _ in 0..<header.nfat_arch {
                 var arch = binary.extract(fat_arch.self, offset: offset)
                 if shouldSwap {
@@ -24,10 +31,14 @@ class Macho {
                 }
 
                 if arch.cputype == CPU_TYPE_ARM64 {
+                    let start = Int(arch.offset)
+                    let size = Int(arch.size)
+                    guard start >= MemoryLayout<fat_header>.size + Int(header.nfat_arch) * archSize,
+                          start <= binary.count, size <= binary.count - start else {
+                        throw PlayCoverError.appCorrupted
+                    }
                     print("Found ARM64 arch in fat binary")
-
-                    binary = binary
-                        .subdata(in: Int(arch.offset)..<Int(arch.offset+arch.size))
+                    binary = binary.subdata(in: start..<(start + size))
 
                     return
                 }
@@ -365,7 +376,7 @@ class Macho {
     }
 
     static func isMachoEncrypted(atURL url: URL) throws -> Bool {
-        var binary = try Data(contentsOf: url)
+        var binary = try Data(contentsOf: url, options: .mappedIfSafe)
         try stripBinary(&binary)
         var result = false
         _ = try iterateLoadCommands(binary: binary) { offset, shouldSwap in
@@ -384,9 +395,17 @@ class Macho {
         return result
     }
 
-    static func isMachoValidArch(_ url: URL) throws -> Bool {
-        let binary = try Data(contentsOf: url, options: .mappedIfSafe)
+    static func isMachoValidArch(_ url: URL, allowingUniversal: Bool = false) throws -> Bool {
+        var binary = try Data(contentsOf: url, options: .mappedIfSafe)
         guard binary.count >= MemoryLayout<mach_header_64>.size else { return false }
+        if allowingUniversal {
+            do {
+                try stripBinary(&binary)
+            } catch PlayCoverError.failedToStripBinary {
+                return false
+            }
+            guard binary.count >= MemoryLayout<mach_header_64>.size else { return false }
+        }
         var header = binary.extract(mach_header_64.self)
         let shouldSwap = header.magic == MH_CIGAM_64
         guard header.magic == MH_MAGIC_64 || shouldSwap else { return false }
