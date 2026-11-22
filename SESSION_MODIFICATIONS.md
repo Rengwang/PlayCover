@@ -197,3 +197,5 @@
 
 - Phase 3 从 Mach-O 实际依赖与 dyld shared cache 判定 Swift overlay，优先保留应用随附的库。转换覆盖宿主直接加载的 Framework 和 dylib。由系统独立加载的 `.appex` 保留 iOS 平台，原生组件 `.bundle` 保留各自目标。写入前验证 load command 空间。
 - Catalyst 测试二进制复现缺少 QuickLook Swift overlay，补充 `LC_RPATH` 和改写绝对安装名均能启动。采用绝对安装名后，重复扫描不再改文件。独立测试验证冷缓存、热缓存、嵌套 Framework 增加和路径移动。B 站、高德地图、小红书的 25 个宿主 Mach-O 均为 arm64 Catalyst，18 个 arm64 系统扩展保留 iOS，未发现悬空 Swift `@rpath`。独立测试同时确认 dyld 会将绝对的 `/usr/lib/swift/libswiftUIKit.dylib` 重定位到 iOSSupport。
+- Phase 6 为 `bypass` 沙盒配置补齐系统 locale 的读取及系统字体、时区别名的必要元数据读取。使用已安装应用的签名规则重放，修复前系统时区退回 UTC、POSIX locale 退回 US-ASCII 且无法读字体别名。候选规则恢复当前时区、UTF-8 和系统字体别名，重放也验证了无关系统文件仍受原本的读限制。
+- 探针构建与常规 Release 均通过 `./sync_upstream.sh build`。最终 Release 包通过递归签名检查，含更新后的 `default.yaml`。运行时自检、主屏和随航回归详见 [PlayTools 的会话记录](https://github.com/Rengwang/PlayTools/blob/master/SESSION_MODIFICATIONS.md)。
