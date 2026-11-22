@@ -47,28 +47,29 @@
 | `PLAYCOVER_TARGET_SCREEN=sidecar` | 已连接随航时优先将新测试窗口放到副屏。 |
 | `PLAYTOOLS_AUTOMATION=1` | 启用进程内 JSON IPC。目录为 `~/Library/Containers/io.playcover.PlayCover/Automation/<bundleId>/`。 |
 | `PLAYTOOLS_SELFTEST=1` | 生成 `Automation/selftest_<bundleId>.json`，包含 PID、时间、逐项结果与观测值。 |
-| `PLAYTOOLS_SELFTEST_GROUP` | 可指定 `keychain`、`platform` 或 `geometry`。探针构建还支持 `entitlements`、`media`。 |
+| `PLAYTOOLS_SELFTEST_GROUP` | 可指定 `keychain`、`platform` 或 `geometry`。探针构建还支持 `entitlements`、`media`、`webkit`、`urls`、`presentations`。 |
 
-IPC 通过 `cmd.json` 接收 `dump`、`dumpTree`、`tap`、`swipe` 或 `setMode`，通过 `state.json` 返回结果。`selftestGeometry` 可在缩放后重新校验坐标往返和画布适配。窗口测试应核对实际落点，触控测试使用进程内事件。
+IPC 通过 `cmd.json` 接收 `dump`、`dumpTree`、`tap`、`swipe` 或 `setMode`，通过 `state.json` 返回结果。`selftestGeometry` 可在缩放后重新校验坐标往返和画布适配。标记过的独立夹具可在探针构建中调用 `selftestPresentations`，验证当前窗口的系统面板。窗口测试应核对实际落点，触控测试使用进程内事件。
 
-构建权限和媒体探针时，在单独的 xcconfig 中加入以下设置。
+构建系统框架探针时，在单独的 xcconfig 中加入以下设置。
 
 ```xcconfig
 SWIFT_ACTIVE_COMPILATION_CONDITIONS = $(inherited) PLAYTOOLS_FRAMEWORK_PROBES
 ```
 
-通过 `XCODE_XCCONFIG_FILE` 传给 `./sync_upstream.sh build`。用独立测试应用验证会申请权限或改动音频会话的入口。普通应用上的探针只运行适用项。本机测试辅助脚本和原始报告位于工作区 `build/diagnostics/`。
+通过 `XCODE_XCCONFIG_FILE` 传给 `./sync_upstream.sh build`。用独立测试应用验证会申请权限或改动音频会话的入口。普通应用上的探针只运行适用项。本机测试辅助脚本和原始报告位于工作区 `build/diagnostics/`，其中 `semantic-contracts/fixture-probes.md` 记录夹具用法。
 
 ## 验证与已知边界
 
 | 范围 | 已验证结果 |
 | --- | --- |
 | Keychain | B 站和独立 Catalyst 应用各通过 20 项。系统 Security 入口返回重复项 `-25299`，持久引用可回查和删除。迁移后的测试库通过 SQLite 检查，临时记录已清理。 |
-| 平台 | 独立应用测试了四种布局与原生平台开关的八种组合。主程序 `+load` 的身份观测与运行后相符，更早加载的依赖库不在此结论内。 |
+| 平台 | 独立应用测试了四种布局与原生平台开关的八种组合。主程序 `+load` 的身份观测与运行后相符，更早加载的依赖库不在此结论内。重复调用 `ProcessInfo.isMacCatalystApp` 的单调用点基准中位数由约 50.4 µs 降至 8.6 ns。 |
 | Mach-O | QuickLook overlay 夹具修复后可启动，弱链接类型和随附库优先级得到保留。冷启动和热启动的指纹测试通过。B 站、高德地图和小红书共检查 25 个 Catalyst 宿主镜像及 18 个独立 iOS 扩展。 |
-| 几何 | B 站、高德地图、小红书和酷安在随航与主屏通过宽窄窗口、缩放和恢复测试。独立夹具验证第二窗口按钮命中。高德地图的可拖动底部面板在窄窗报告 11 个越界候选，与对照一致。 |
-| 权限和媒体 | 主屏全量探针通过 54 项。通知临时授权另外验证，测试通知已删除。常用音频类别、混音播放激活和状态恢复通过。Apple ID 交互登录与 GameKit 认证尚未实测。 |
+| 几何 | 第二轮在内建屏用最终 Release 对 B 站、高德地图、小红书和酷安完成 16 项宽窄窗口、缩放与恢复检查。四款应用正常退出，本轮几何回归期间无新增崩溃报告。小红书可打开笔记和分享入口的应用内登录提示。高德地图的底部面板保留越界候选。独立夹具验证了第二窗口按钮命中。 |
+| 权限和媒体 | 第二轮全量探针通过 70 项。新夹具另行验证临时通知授权并完成清理。常用音频类别、混音播放激活和状态恢复通过。Apple 登录与 GameKit 认证使用可单独触发的测试入口，待随航实测。 |
+| WebKit、跳转和系统面板 | iPhone 和 Duo 的窄窗 WebView 返回移动 UA，显式桌面模式与自定义 UA 得到保留。未知 Scheme 和相对 URL 在约 8–12 ms 返回 `false`。15 项系统面板检查覆盖宽窗、窄窗和等比缩放。 |
 | 沙盒 | 工行签名规则的本机重放确认修复时区、UTF-8 和系统字体别名读取，无关系统文件仍受原规则限制。签名或完整性自检需单独定位。 |
-| 功耗 | UpTimer 相同主屏窗口尺寸的短时空闲采样为约 1.53 → 1.60 mW。该采样只覆盖进程短时空闲。 |
+| 功耗 | UpTimer 在相同 810 × 720 窗口下，两组 15 秒空闲样本的平均进程归因功耗为 2.93 → 3.88 mW。延长稳定时间后，30 秒对照为 2.55 → 2.51 mW，未复现短样本升幅。长期运行和整机功耗待测。 |
 
 详细报告保存在本机诊断目录。发布或表述某个应用已兼容时，应以对应版本和具体场景的复测为准。
