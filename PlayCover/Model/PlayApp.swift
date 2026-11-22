@@ -151,7 +151,7 @@ class PlayApp: BaseApp {
         let cachedVersion = settings.settings.machoTrapSchemaVersion
         let cachedFingerprint = settings.settings.machoScanFingerprint
         let cachedFingerprintMatches = !cachedFingerprint.isEmpty
-            && cachedFingerprint == Self.machoScanFingerprint(for: machos)
+            && cachedFingerprint == machoScanFingerprint(for: machos)
         let scanNeeded = cachedVersion != Macho.trapSchemaVersion || !cachedFingerprintMatches
 
         var needsBundleResign = false
@@ -161,9 +161,15 @@ class PlayApp: BaseApp {
                 throw PlayCoverError.appEncrypted
             }
             let needsConversion = try !Macho.isMachoValidArch(macho)
+            let repairedLibraries: Bool
             if needsConversion {
-                try Macho.convertMacho(macho)
+                try Macho.convertMacho(macho, in: url)
                 convertedAny = true
+                repairedLibraries = false
+            } else if scanNeeded {
+                repairedLibraries = try Macho.repairSwiftLibraries(in: macho, app: url)
+            } else {
+                repairedLibraries = false
             }
             var patchedTraps = 0
             // A converted slice must always be rescanned, otherwise a fresh
@@ -174,7 +180,7 @@ class PlayApp: BaseApp {
                     print("Neutralized \(patchedTraps) anti-tamper trap stub(s) in \(macho.lastPathComponent)")
                 }
             }
-            if needsConversion || patchedTraps > 0 {
+            if needsConversion || repairedLibraries || patchedTraps > 0 {
                 try Shell.signMacho(macho)
                 needsBundleResign = true
             }
@@ -185,7 +191,7 @@ class PlayApp: BaseApp {
             // the same sizes and timestamps.
             var updated = settings.settings
             updated.machoTrapSchemaVersion = Macho.trapSchemaVersion
-            updated.machoScanFingerprint = Self.machoScanFingerprint(for: machos)
+            updated.machoScanFingerprint = machoScanFingerprint(for: machos)
             if updated.machoTrapSchemaVersion != cachedVersion
                 || updated.machoScanFingerprint != cachedFingerprint {
                 settings.settings = updated
@@ -201,13 +207,19 @@ class PlayApp: BaseApp {
         return true
     }
 
-    private static func machoScanFingerprint(for machos: [URL]) -> String {
-        machos.map { macho in
-            let attributes = try? FileManager.default.attributesOfItem(atPath: macho.path)
+    private func machoScanFingerprint(for machos: [URL]) -> String {
+        let prefix = url.standardizedFileURL.path + "/"
+        let entries = machos.map { macho in
+            let path = macho.standardizedFileURL.path
+            let relativePath = path.hasPrefix(prefix) ? String(path.dropFirst(prefix.count)) : path
+            let attributes = try? FileManager.default.attributesOfItem(atPath: path)
             let size = (attributes?[.size] as? NSNumber)?.int64Value ?? 0
-            let modified = Int((attributes?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0)
-            return "\(macho.lastPathComponent):\(size):\(modified)"
-        }.joined(separator: "|")
+            let modified = (attributes?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+            return "\(relativePath):\(size):\(modified)"
+        }
+        let systemVersion = ProcessInfo.processInfo.operatingSystemVersionString
+        return (["swift:\(Macho.swiftLibrarySchemaVersion):\(systemVersion)"] + entries.sorted())
+            .joined(separator: "|")
     }
 }
 

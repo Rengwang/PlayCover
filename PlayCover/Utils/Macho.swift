@@ -39,17 +39,18 @@ class Macho {
         }
     }
 
-    static func convertMacho(_ macho: URL) throws {
+    static func convertMacho(_ macho: URL, in app: URL? = nil) throws {
         print("Converting MachO at \(macho.path)")
 
         var binary = try Data(contentsOf: macho)
 
         print("Stripping MachO...")
         try stripBinary(&binary)
-        print("Replacing version command...")
-        try replaceVersionCommand(&binary)
-        print("Replacing instances of @rpath dylibs...")
-        try replaceLibraries(&binary)
+        if try !isCatalyst(binary) {
+            print("Replacing version command...")
+            try replaceVersionCommand(&binary)
+        }
+        _ = try resolveSwiftLibraries(&binary, at: macho, in: app)
         if try stripRestrictSegment(&binary) {
             print("Neutralized __RESTRICT segment in MachO")
         }
@@ -59,93 +60,133 @@ class Macho {
         }
 
         print("Writing revised MachO...")
-        try FileManager.default.removeItem(at: macho)
-        try binary.write(to: macho)
+        try binary.write(to: macho, options: .atomic)
         try macho.setBinaryPosixPermissions(0o755)
     }
 
-    static let iOSSupportSwiftDylibs = [
-        "libswiftUIKit",
-        "libswiftARKit",
-        "libswiftMapKit",
-        "libswiftSceneKit",
-        "libswiftPhotosUI",
-        "libswiftCoreNFC",
-        "libswiftPencilKit",
-        "libswiftWebKit",
-        "libswiftHomeKit",
-        "libswiftPassKit"
+    static let swiftLibrarySchemaVersion = 1
+
+    private static let iOSSupportSwiftDirectory = "/System/iOSSupport/usr/lib/swift"
+    private static let macOSSwiftDirectory = "/usr/lib/swift"
+
+    // Keep the Catalyst overlay for framework libraries that were previously
+    // explicitly mapped and can also have a macOS overlay of the same name.
+    private static let catalystFrameworkOverlays: Set<String> = [
+        "libswiftUIKit.dylib", "libswiftARKit.dylib", "libswiftMapKit.dylib",
+        "libswiftSceneKit.dylib", "libswiftPhotosUI.dylib", "libswiftCoreNFC.dylib",
+        "libswiftPencilKit.dylib", "libswiftWebKit.dylib", "libswiftHomeKit.dylib",
+        "libswiftPassKit.dylib"
     ]
 
-    static func replaceLibraries(_ binary: inout Data) throws {
-        for dylib in iOSSupportSwiftDylibs {
-            let rpathDylib = "@rpath/\(dylib).dylib"
-            let libDylib = "/System/iOSSupport/usr/lib/swift/\(dylib).dylib"
+    private typealias SharedCacheContainsPath = @convention(c) (UnsafePointer<CChar>) -> Bool
 
-            // 1. Check if dylib LC exists
-            // 2. If it exists, take notes of its command type and dylib struct
-            // 3. Replace existing LC with new dylib path
+    private static let sharedCacheContainsPath: SharedCacheContainsPath? = {
+        guard let handle = dlopen(nil, RTLD_LAZY) else { return nil }
+        defer { dlclose(handle) }
+        guard let symbol = dlsym(handle, "_dyld_shared_cache_contains_path") else { return nil }
+        return unsafeBitCast(symbol, to: SharedCacheContainsPath.self)
+    }()
 
-            try replaceLibrary(&binary, rpathDylib, libDylib)
+    private static func systemLibraryExists(_ path: String) -> Bool {
+        FileManager.default.fileExists(atPath: path)
+            || path.withCString { sharedCacheContainsPath?($0) == true }
+    }
+
+    private static func bundledLibraryExists(_ filename: String, at macho: URL, in app: URL?) -> Bool {
+        let directory = macho.deletingLastPathComponent()
+        var candidates = [directory.appendingPathComponent(filename)]
+        if let app = app {
+            candidates.append(app.appendingPathComponent("Frameworks").appendingPathComponent(filename))
+        }
+        return candidates.contains {
+            $0.standardizedFileURL != macho.standardizedFileURL && FileManager.default.fileExists(atPath: $0.path)
         }
     }
 
-    static func replaceLibrary(_ binary: inout Data, _ rpath: String, _ lib: String) throws {
-        var dylibCommandType: UInt32 = 0
-        var oldDylib: dylib?
+    /// Carries the same repair forward to already-installed Catalyst images.
+    static func repairSwiftLibraries(in macho: URL, app: URL) throws -> Bool {
+        var binary = try Data(contentsOf: macho, options: .mappedIfSafe)
+        guard try resolveSwiftLibraries(&binary, at: macho, in: app, copyBeforeWriting: true) else { return false }
+        let permissions = try FileManager.default.attributesOfItem(atPath: macho.path)[.posixPermissions]
+        try binary.write(to: macho, options: .atomic)
+        if let permissions = permissions {
+            try FileManager.default.setAttributes([.posixPermissions: permissions], ofItemAtPath: macho.path)
+        }
+        return true
+    }
 
-        try replaceLastCommand(&binary, satisfy: {commandData, shouldSwap in
-            // Perform steps 1-2
-            let loadCommand = commandData.extract(load_command.self,
-                                                  offset: commandData.startIndex,
-                                                  swap: shouldSwap ? swap_load_command:nil)
-            if ![LC_LOAD_WEAK_DYLIB, UInt32(LC_LOAD_DYLIB)].contains(loadCommand.cmd) {
-                return false
+    private static func resolveSwiftLibraries(
+        _ binary: inout Data, at macho: URL, in app: URL?, copyBeforeWriting: Bool = false
+    ) throws -> Bool {
+        let headerSize = MemoryLayout<mach_header_64>.size
+        let commandSize = MemoryLayout<dylib_command>.size
+        let rpathPrefix = "@rpath/"
+        var changes: [(range: Range<Int>, bytes: Data)] = []
+        var malformedCommand = false
+        var reversedByteOrder = false
+        let oldEnd = try iterateLoadCommands(binary: binary) { offset, shouldSwap in
+            reversedByteOrder = shouldSwap
+            let load = binary.extract(load_command.self, offset: offset, swap: shouldSwap ? swap_load_command : nil)
+            guard load.cmd == UInt32(LC_LOAD_DYLIB) || load.cmd == LC_LOAD_WEAK_DYLIB else { return false }
+            guard load.cmdsize > commandSize else {
+                malformedCommand = true
+                return true
             }
-            let dylibCommand = commandData.extract(dylib_command.self,
-                                                   offset: commandData.startIndex,
-                                                   swap: shouldSwap ? swap_dylib_command:nil)
-            if String(data: commandData,
-                      offset: commandData.startIndex,
-                      commandSize: Int(dylibCommand.cmdsize),
-                      loadCommandString: dylibCommand.dylib.name) != rpath {
-                return false
+            var command = binary.extract(dylib_command.self, offset: offset,
+                                         swap: shouldSwap ? swap_dylib_command : nil)
+            let nameOffset = Int(command.dylib.name.offset)
+            guard nameOffset >= commandSize, nameOffset < Int(load.cmdsize) else {
+                malformedCommand = true
+                return true
             }
-            dylibCommandType = dylibCommand.cmd
-            oldDylib = dylibCommand.dylib
-            return true
+            let end = offset + Int(load.cmdsize)
+            let name = binary[(offset + nameOffset)..<end]
+            guard let terminator = name.firstIndex(of: 0),
+                  let path = String(data: name[..<terminator], encoding: .utf8) else {
+                malformedCommand = true
+                return true
+            }
+            guard path.hasPrefix(rpathPrefix) else { return false }
+            let filename = String(path.dropFirst(rpathPrefix.count))
+            guard filename.hasPrefix("libswift"), filename.hasSuffix(".dylib"), !filename.contains("/"),
+                  !bundledLibraryExists(filename, at: macho, in: app) else { return false }
+            let replacement = iOSSupportSwiftDirectory + "/" + filename
+            guard systemLibraryExists(replacement),
+                  catalystFrameworkOverlays.contains(filename)
+                    || !systemLibraryExists(macOSSwiftDirectory + "/" + filename) else { return false }
 
-        }, with: {shouldSwap in
-            guard var newDylib = oldDylib else {
-                // dylib with given rpath was not found in binary
-                return nil
-            }
+            let nameBytes = Data(replacement.utf8)
+            let padding = 8 - (nameBytes.count % 8)
+            command.dylib.name = lc_str(offset: UInt32(commandSize))
+            command.cmdsize = UInt32(max(Int(load.cmdsize), commandSize + nameBytes.count + padding))
+            let zeros = Int(command.cmdsize) - commandSize - nameBytes.count
+            if shouldSwap { swap_dylib_command(&command, NX_BigEndian) }
+            var bytes = Data(bytes: &command, count: commandSize)
+            bytes.append(nameBytes)
+            bytes.append(Data(count: zeros))
+            changes.append((offset..<end, bytes))
+            return false
+        }
+        guard !malformedCommand else { throw PlayCoverError.appCorrupted }
+        guard !changes.isEmpty else { return false }
 
-            print("Found \(rpath) in binary")
-
-            // Perform step 3
-            let dylibCommandFixedSize = MemoryLayout<dylib_command>.size
-            let stringLength = lib.lengthOfBytes(using: String.Encoding.utf8)
-            // Align to 8 bytes, leave at least 1 zero for C-style string ending
-            let padding = 8 - (stringLength % 8)
-            let newDylibCommandSize = dylibCommandFixedSize + stringLength + padding
-
-            newDylib.name = lc_str(offset: UInt32(dylibCommandFixedSize))
-            var command = dylib_command(cmd: dylibCommandType,
-                                        cmdsize: UInt32(newDylibCommandSize),
-                                        dylib: newDylib)
-            guard let stringData = lib.data(using: String.Encoding.utf8) else {
-                print("Failed to replace dylib command: unrecognized character in target path")
-                return nil
-            }
-            if shouldSwap {
-                swap_dylib_command(&command, NX_BigEndian)
-            }
-            var commandData = Data(bytes: &command, count: dylibCommandFixedSize)
-            commandData.append(stringData)
-            commandData.append(Data(count: padding))
-            return commandData
-        }, atEnd: false)
+        // Replace in the original order. Bind opcodes reference dylib load
+        // commands by ordinal, including the weak commands.
+        var commands = Data()
+        var cursor = headerSize
+        for change in changes {
+            commands.append(binary[cursor..<change.range.lowerBound])
+            commands.append(change.bytes)
+            cursor = change.range.upperBound
+        }
+        commands.append(binary[cursor..<oldEnd])
+        if copyBeforeWriting {
+            // A Data read with .mappedIfSafe can be backed by a read-only mapping.
+            binary = binary.withUnsafeBytes { Data($0) }
+        }
+        try writeLoadCommands(&binary, commands: commands, start: headerSize, oldEnd: oldEnd,
+                              shouldSwap: reversedByteOrder)
+        return true
     }
 
     static func replaceVersionCommand(_ binary: inout Data) throws {
@@ -180,7 +221,8 @@ class Macho {
                                    atEnd shouldAppend: Bool) throws {
         let headerSize = MemoryLayout<mach_header_64>.size
         var header = binary.extract(mach_header_64.self)
-        var shouldSwap = false
+        let shouldSwap = header.magic == MH_CIGAM_64
+        if shouldSwap { swap_mach_header_64(&header, NXHostByteOrder()) }
 
         var oldCommandStart = headerSize
         var oldCommandSize: UInt32 = 0
@@ -192,52 +234,108 @@ class Macho {
             if isTargetCommand(binary[offset ..< offset+Int(loadCommand.cmdsize)], needSwap) {
                 oldCommandStart = offset
                 oldCommandSize = loadCommand.cmdsize
-                shouldSwap = needSwap
             }
             return false
         }
-        if movedCommandsEnd != headerSize + Int(header.sizeofcmds) {
-            print("Error while replacing load command: end of commands mismatch")
+        guard movedCommandsEnd == headerSize + Int(header.sizeofcmds) else {
+            throw PlayCoverError.appCorrupted
         }
 
         let oldCommandEnd = oldCommandStart + Int(oldCommandSize)
-        guard let newCommandData = getNewCommandData(shouldSwap) else {
-            return
-        }
-        let newCommandSize = UInt32(newCommandData.count)
+        guard let newCommandData = getNewCommandData(shouldSwap) else { return }
 
         var resultingCommandsData = binary[oldCommandEnd..<movedCommandsEnd]
         if shouldAppend {
             resultingCommandsData.append(newCommandData)
         } else {
-            resultingCommandsData.insert(contentsOf: newCommandData,
-                                         at: resultingCommandsData.startIndex)
+            resultingCommandsData.insert(contentsOf: newCommandData, at: resultingCommandsData.startIndex)
         }
+        try writeLoadCommands(&binary, commands: resultingCommandsData, start: oldCommandStart,
+                              oldEnd: movedCommandsEnd, shouldSwap: shouldSwap,
+                              addsCommand: oldCommandSize == 0)
+    }
 
-        let injectionEnd = movedCommandsEnd - Int(oldCommandSize) + Int(newCommandSize)
-        if injectionEnd > movedCommandsEnd {
-            if let nonZero = binary[movedCommandsEnd ..< injectionEnd].first(where: {$0 != 0}) {
-                print("Non zero value \(nonZero) found after load commands. Injection may overlap data section")
+    private struct InsufficientLoadCommandSpace: LocalizedError {
+        var errorDescription: String? { "The Mach-O has insufficient header space for its load commands." }
+    }
+
+    private static func writeLoadCommands(
+        _ binary: inout Data, commands: Data, start: Int, oldEnd: Int, shouldSwap: Bool, addsCommand: Bool = false
+    ) throws {
+        let headerSize = MemoryLayout<mach_header_64>.size
+        let newEnd = start + commands.count
+        if newEnd > oldEnd {
+            guard newEnd <= binary.count, newEnd <= (try firstFileDataOffset(in: binary)),
+                  binary[oldEnd..<newEnd].allSatisfy({ $0 == 0 }) else {
+                throw InsufficientLoadCommandSpace()
             }
-        } else {
-            binary.replaceSubrange(injectionEnd ..< movedCommandsEnd,
-                                   with: Data(count: movedCommandsEnd - injectionEnd))
         }
-        binary.replaceSubrange(oldCommandStart..<injectionEnd, with: resultingCommandsData)
 
-        // Write new header data
-        header.sizeofcmds -= oldCommandSize
-        header.sizeofcmds += newCommandSize
-        let newHeaderData = Data(bytes: &header, count: headerSize)
-        binary.replaceSubrange(0..<headerSize, with: newHeaderData)
+        var header = binary.extract(mach_header_64.self, swap: shouldSwap ? swap_mach_header_64 : nil)
+        guard oldEnd == headerSize + Int(header.sizeofcmds),
+              let commandSize = UInt32(exactly: newEnd - headerSize) else {
+            throw PlayCoverError.appCorrupted
+        }
+        header.sizeofcmds = commandSize
+        if addsCommand { header.ncmds += 1 }
+        if shouldSwap { swap_mach_header_64(&header, NX_BigEndian) }
+
+        if newEnd < oldEnd {
+            binary.replaceSubrange(newEnd..<oldEnd, with: Data(count: oldEnd - newEnd))
+        }
+        binary.replaceSubrange(start..<newEnd, with: commands)
+        binary.replaceSubrange(0..<headerSize, with: Data(bytes: &header, count: headerSize))
+    }
+
+    private static func firstFileDataOffset(in binary: Data) throws -> Int {
+        let segmentSize = MemoryLayout<segment_command_64>.size
+        let sectionSize = MemoryLayout<section_64>.size
+        var firstOffset: Int?
+        var malformed = false
+        _ = try iterateLoadCommands(binary: binary) { offset, shouldSwap in
+            let load = binary.extract(load_command.self, offset: offset, swap: shouldSwap ? swap_load_command : nil)
+            guard load.cmd == UInt32(LC_SEGMENT_64) else { return false }
+            guard Int(load.cmdsize) >= segmentSize else {
+                malformed = true
+                return true
+            }
+
+            let segment = binary.extract(segment_command_64.self, offset: offset,
+                                         swap: shouldSwap ? swap_segment_command_64 : nil)
+            let sectionCount = Int(segment.nsects)
+            guard sectionCount <= (Int(load.cmdsize) - segmentSize) / sectionSize else {
+                malformed = true
+                return true
+            }
+            if segment.fileoff > 0, segment.filesize > 0, let fileOffset = Int(exactly: segment.fileoff) {
+                firstOffset = min(firstOffset ?? fileOffset, fileOffset)
+            }
+            for index in 0..<sectionCount {
+                let sectionStart = offset + segmentSize + index * sectionSize
+                let section = binary.extract(section_64.self, offset: sectionStart,
+                                             swap: shouldSwap ? { swap_section_64($0, 1, $1) } : nil)
+                let sectionOffset = Int(section.offset)
+                if sectionOffset > 0, section.size > 0 {
+                    firstOffset = min(firstOffset ?? sectionOffset, sectionOffset)
+                }
+            }
+            return false
+        }
+        guard !malformed else { throw PlayCoverError.appCorrupted }
+        guard let firstOffset = firstOffset, firstOffset <= binary.count else {
+            throw InsufficientLoadCommandSpace()
+        }
+        return firstOffset
     }
 
     static func iterateLoadCommands(binary: Data, _ evaluate: (Int, Bool) -> Bool) throws -> Int {
         let headerSize = MemoryLayout<mach_header_64>.size
+        guard binary.count >= headerSize else { throw PlayCoverError.appCorrupted }
         var header = binary.extract(mach_header_64.self)
         var offset = headerSize
         let shouldSwap = header.magic == MH_CIGAM_64
-        if  shouldSwap {
+        guard header.magic == MH_MAGIC_64 || shouldSwap else { throw PlayCoverError.appCorrupted }
+        if shouldSwap {
             swap_mach_header_64(&header, NXHostByteOrder())
             print("Slim Mach-O has reversed byte order")
         }
@@ -248,20 +346,21 @@ class Macho {
             throw PlayCoverError.appCorrupted
         }
         for index in 0..<header.ncmds {
+            let loadCommandSize = MemoryLayout<load_command>.size
+            guard offset + loadCommandSize <= allCommandsEnd else { throw PlayCoverError.appCorrupted }
             let loadCommand = binary.extract(load_command.self,
                                              offset: offset,
                                              swap: shouldSwap ? swap_load_command:nil)
             let commandEnd = offset + Int(loadCommand.cmdsize)
-            if commandEnd > allCommandsEnd || commandEnd <= offset {
+            if commandEnd > allCommandsEnd || loadCommand.cmdsize < loadCommandSize {
                 print("Cannot iterate load commands: Mach-O file is corrupted(\(index))")
                 throw PlayCoverError.appCorrupted
             }
             let terminated = evaluate(offset, shouldSwap)
             offset = commandEnd
-            if terminated {
-                break
-            }
+            if terminated { return offset }
         }
+        guard offset == allCommandsEnd else { throw PlayCoverError.appCorrupted }
         return offset
     }
 
@@ -286,22 +385,32 @@ class Macho {
     }
 
     static func isMachoValidArch(_ url: URL) throws -> Bool {
-        var binary = try Data(contentsOf: url)
-        try stripBinary(&binary)
+        let binary = try Data(contentsOf: url, options: .mappedIfSafe)
+        guard binary.count >= MemoryLayout<mach_header_64>.size else { return false }
+        var header = binary.extract(mach_header_64.self)
+        let shouldSwap = header.magic == MH_CIGAM_64
+        guard header.magic == MH_MAGIC_64 || shouldSwap else { return false }
+        if shouldSwap { swap_mach_header_64(&header, NXHostByteOrder()) }
+        return try header.cputype == CPU_TYPE_ARM64 && isCatalyst(binary)
+    }
+
+    private static func isCatalyst(_ binary: Data) throws -> Bool {
         var result = false
+        var malformed = false
         _ = try iterateLoadCommands(binary: binary) { offset, shouldSwap in
-            let loadCommand = binary.extract(load_command.self,
-                                             offset: offset,
-                                             swap: shouldSwap ? swap_load_command:nil)
-            if loadCommand.cmd == UInt32(LC_BUILD_VERSION) {
-                let versionCommand = binary.extract(build_version_command.self,
-                                                    offset: offset,
-                                                    swap: shouldSwap ? swap_build_version_command:nil)
-                result = versionCommand.platform == PLATFORM_MACCATALYST
+            let loadCommand = binary.extract(load_command.self, offset: offset,
+                                             swap: shouldSwap ? swap_load_command : nil)
+            guard loadCommand.cmd == UInt32(LC_BUILD_VERSION) else { return false }
+            guard loadCommand.cmdsize >= MemoryLayout<build_version_command>.size else {
+                malformed = true
                 return true
             }
-            return false
+            let versionCommand = binary.extract(build_version_command.self, offset: offset,
+                                                swap: shouldSwap ? swap_build_version_command : nil)
+            result = versionCommand.platform == PLATFORM_MACCATALYST
+            return true
         }
+        guard !malformed else { throw PlayCoverError.appCorrupted }
         return result
     }
 }

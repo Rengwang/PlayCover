@@ -87,7 +87,7 @@ class Installer {
                     }
 
                     if !export {
-                        try Macho.convertMacho(macho)
+                        try Macho.convertMacho(macho, in: app.url)
                         try Shell.signMacho(macho)
                     }
                 }
@@ -224,7 +224,7 @@ class Installer {
             resolved.append(executableURL)
         }
 
-        baseApp.url.enumerateContents { url, attributes in
+        baseApp.url.enumerateContents(descendingIntoPackages: ["framework"]) { url, attributes in
             guard attributes.isRegularFile == true, let fileSize = attributes.fileSize, fileSize > 4 else {
                 return
             }
@@ -296,7 +296,7 @@ extension Installer {
             if try Macho.isMachoEncrypted(atURL: macho) {
                 throw PlayCoverError.appEncrypted
             }
-            try Macho.convertMacho(macho)
+            try Macho.convertMacho(macho, in: app.url)
             try Shell.signMacho(macho)
         }
 

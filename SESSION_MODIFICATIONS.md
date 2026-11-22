@@ -192,3 +192,8 @@
 2. **工行 `0xb5a96000` 崩溃定位结论（只读核查，未改代码）**
    - 崩溃由 `ICBCBankTest+0x25f5c4` 处的自毁桩触发：该函数先做调用计数/取模门控，再对输入做 32 位滚动异或校验（`eor` 链），把结果与硬编码 `0x166ea526` 比较，不等即跳 `0xb5a96000`。
    - 这是银行自身的重签/完整性自检（硬编码期望值 + 内联自毁），不是 macOS 通用 API 或沙盒路径差异；按约定记录实证后止损，不做单 App 特判，也不放宽 `Macho.swift` 的 4,755 处反向桩匹配。
+
+## iOS 语义契约排查
+
+- Phase 3 从 Mach-O 实际依赖与 dyld shared cache 判定 Swift overlay，优先保留应用随附的库。转换覆盖宿主直接加载的 Framework 和 dylib。由系统独立加载的 `.appex` 保留 iOS 平台，原生组件 `.bundle` 保留各自目标。写入前验证 load command 空间。
+- Catalyst 测试二进制复现缺少 QuickLook Swift overlay，补充 `LC_RPATH` 和改写绝对安装名均能启动。采用绝对安装名后，重复扫描不再改文件。独立测试验证冷缓存、热缓存、嵌套 Framework 增加和路径移动。B 站、高德地图、小红书的 25 个宿主 Mach-O 均为 arm64 Catalyst，18 个 arm64 系统扩展保留 iOS，未发现悬空 Swift `@rpath`。独立测试同时确认 dyld 会将绝对的 `/usr/lib/swift/libswiftUIKit.dylib` 重定位到 iOSSupport。
