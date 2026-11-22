@@ -181,3 +181,14 @@
 5. 构建后删除旧的 `PlayCover.app` 再重编，避免 Xcode 复用上一次的产品。
 
 **注意**：`PlayCover.xcodeproj` 的 `FRAMEWORK_SEARCH_PATHS` 仍指向 `PlayTools.xcframework/ios-arm64/...`。这是刻意保留的：宿主是 macOS App，直接链接 `maccatalyst` 切片会因平台不匹配链接失败，现有做法是在拷贝后由 `vtool -set-build-version maccatalyst` 改写平台。若改为链接 catalyst 切片，需要先验证链接器行为。
+
+---
+
+## 十一、安装器加固与工行自毁结论（2026-11-22）
+
+1. **框架原子替换加固（`PlayCover/Utils/PlayTools.swift`）**
+   - staging 使用 `PlayTools.framework.staging-<UUID>`，并发安装互不干扰；`codesign -v` 失败即抛错，旧框架保持可用；目标为失效符号链接时先移除再 `moveItem`；移除 `installInIPA` 未使用的 `export` 参数。
+   - 三处原生 Catalyst `PlayTools`（Carthage / App 内嵌 / `~/Library/Frameworks`）UUID 一致（本轮 `C1FBF850-D97B-3F64-9B37-0A575D42CB9A`）。
+2. **工行 `0xb5a96000` 崩溃定位结论（只读核查，未改代码）**
+   - 崩溃由 `ICBCBankTest+0x25f5c4` 处的自毁桩触发：该函数先做调用计数/取模门控，再对输入做 32 位滚动异或校验（`eor` 链），把结果与硬编码 `0x166ea526` 比较，不等即跳 `0xb5a96000`。
+   - 这是银行自身的重签/完整性自检（硬编码期望值 + 内联自毁），不是 macOS 通用 API 或沙盒路径差异；按约定记录实证后止损，不做单 App 特判，也不放宽 `Macho.swift` 的 4,755 处反向桩匹配。
