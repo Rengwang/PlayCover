@@ -122,11 +122,18 @@ struct PlayAppConditionalView: View {
     @State var app: PlayApp
     @State var isList: Bool
     @State var hasPlayTools: Bool?
+    @State private var appIconImage: NSImage?
 
+    @ViewBuilder
     private var appIcon: some View {
-        Image(nsImage: NSWorkspace.shared.icon(forFile: app.url.path))
-            .resizable()
-            .scaledToFit()
+        if let image = appIconImage ?? Cacher.shared.cachedAppIcon(forPath: app.url.path) {
+            Image(nsImage: image)
+                .resizable()
+                .scaledToFit()
+        } else {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color.secondary.opacity(0.15))
+        }
     }
 
     var body: some View {
@@ -198,9 +205,23 @@ struct PlayAppConditionalView: View {
                 .frame(width: 130, height: 130)
             }
         }
-        .task(priority: .background) {
-            hasPlayTools = app.hasPlayTools()
-            showStartingProgress = app.isStarting
+        .task(id: app.url) {
+            let appRef = app
+            let appPath = appRef.url.path
+            showStartingProgress = appRef.isStarting
+
+            if appIconImage == nil {
+                if let cached = Cacher.shared.cachedAppIcon(forPath: appPath) {
+                    appIconImage = cached
+                } else {
+                    appIconImage = await Cacher.shared.loadAppIcon(forPath: appPath)
+                }
+            }
+
+            let installed = await Task.detached(priority: .utility) {
+                appRef.hasPlayTools()
+            }.value
+            hasPlayTools = installed
         }
     }
 }

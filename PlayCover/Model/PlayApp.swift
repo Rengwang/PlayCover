@@ -34,13 +34,6 @@ class PlayApp: BaseApp {
     // MARK: - Init
     override init(appUrl: URL) {
         super.init(appUrl: appUrl)
-
-        keymapping.reloadKeymapCache()
-
-        removeAlias()
-        createAlias()
-
-        loadDiscordIPC()
     }
 
     // MARK: - Computed
@@ -97,7 +90,7 @@ class PlayApp: BaseApp {
             // assembled before its signature is sealed over its contents.
             // If the app does not have PlayTools, do not install PlugIns
             if hasPlayTools() {
-                try PlayTools.installPluginInIPA(url)
+                try PlayTools.installPluginInIPA(url, reusingInstalledFiles: true)
             }
 
             // Neutralize any __RESTRICT/__restrict segment in place so dyld allows
@@ -132,6 +125,7 @@ class PlayApp: BaseApp {
                     // alias to keep its Info.plist copy in sync with the sealed bundle
                     removeAlias()
                     createAlias()
+                    loadDiscordIPC()
 
                     runAppExec() // Splitting to reduce complexity
                 }

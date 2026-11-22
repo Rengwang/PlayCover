@@ -120,6 +120,8 @@ class Installer {
                     let installedApp = PlayApp(appUrl: finalURL)
 
                     installedApp.sign()
+                    installedApp.removeAlias()
+                    installedApp.createAlias()
                 }
 
                 try ipa.removeQuarantine(finalURL)

@@ -53,7 +53,7 @@ class PlayTools {
     }
 
     static func installOnSystem() {
-        Task(priority: .background) {
+        Task.detached(priority: .background) {
             do {
                 try installOnSystemSync()
             } catch {
@@ -143,13 +143,14 @@ class PlayTools {
         }
     }
 
-    static func installPluginInIPA(_ payload: URL) throws {
+    static func installPluginInIPA(_ payload: URL, reusingInstalledFiles: Bool = false) throws {
         let allFiles = try FileManager.default.contentsOfDirectory(
             at: bundledPlayToolsFramework, includingPropertiesForKeys: [])
         for localizationDirectory in allFiles where localizationDirectory.pathExtension == "lproj" {
             _ = try copyAsset(target: payload,
                               directoryName: localizationDirectory.lastPathComponent,
-                              component: "Playtools", pathExtension: "strings")
+                              component: "Playtools", pathExtension: "strings",
+                              reusingInstalledFiles: reusingInstalledFiles)
         }
 
         let bundledPlayToolsResources = bundledPlayToolsFramework
@@ -163,14 +164,15 @@ class PlayTools {
                 _ = try copyAsset(source: bundledPlayToolsResources,
                                   target: payload,
                                   directoryName: localizationDirectory.lastPathComponent,
-                                  component: "Playtools", pathExtension: "strings")
+                                  component: "Playtools", pathExtension: "strings",
+                                  reusingInstalledFiles: reusingInstalledFiles)
             }
         }
 
-        try installComponentBundles(into: payload)
+        try installComponentBundles(into: payload, reusingInstalledFiles: reusingInstalledFiles)
     }
 
-    static func installComponentBundles(into payload: URL) throws {
+    static func installComponentBundles(into payload: URL, reusingInstalledFiles: Bool) throws {
         let pluginsSource = bundledPlayToolsFramework.appendingPathComponent("PlugIns")
         let pluginsTarget = payload.appendingPathComponent("PlugIns")
         try FileManager.default.createDirectory(at: pluginsTarget, withIntermediateDirectories: true)
@@ -182,6 +184,13 @@ class PlayTools {
 
         for bundleSource in bundles {
             let bundleTarget = pluginsTarget.appendingPathComponent(bundleSource.lastPathComponent)
+            // Compare the entire bundle, including the signature and nested resources.
+            if reusingInstalledFiles,
+               FileManager.default.contentsEqual(atPath: bundleSource.path, andPath: bundleTarget.path),
+               let executable = Bundle(url: bundleTarget)?.executableURL,
+               FileManager.default.isExecutableFile(atPath: executable.path) {
+                continue
+            }
             if FileManager.default.fileExists(atPath: bundleTarget.path) {
                 try FileManager.default.removeItem(at: bundleTarget)
             }
@@ -192,7 +201,8 @@ class PlayTools {
     }
 
     static func copyAsset(source: URL = bundledPlayToolsFramework, target: URL, directoryName: String,
-                          component: String, pathExtension: String) throws -> URL {
+                          component: String, pathExtension: String,
+                          reusingInstalledFiles: Bool) throws -> URL {
         let directory = target.appendingPathComponent(directoryName)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
 
@@ -204,6 +214,11 @@ class PlayTools {
                     .appendingPathComponent(directoryName)
                     .appendingPathComponent(component)
                     .appendingPathExtension(pathExtension)
+        if reusingInstalledFiles,
+           FileManager.default.isReadableFile(atPath: target.path),
+           FileManager.default.contentsEqual(atPath: source.path, andPath: target.path) {
+            return target
+        }
         do {
             try FileManager.default.copyItem(at: source, to: target)
         } catch {
@@ -275,29 +290,116 @@ class PlayTools {
         })
     }
 
-    static func installedInExec(atURL url: URL) throws -> Bool {
-        var binary = try Data(contentsOf: url)
-        try Macho.stripBinary(&binary)
-        var result = false
-        try _ = Macho.iterateLoadCommands(binary: binary) { offset, shouldSwap in
-            let loadCommand = binary.extract(load_command.self, offset: offset,
-                                             swap: shouldSwap ? swap_load_command:nil)
-            if loadCommand.cmd == UInt32(LC_LOAD_DYLIB) {
-                let dylibCommand = binary.extract(dylib_command.self, offset: offset,
-                                                  swap: shouldSwap ? swap_dylib_command:nil)
+    private static func arm64SliceOffset(in handle: FileHandle) throws -> UInt64 {
+        guard let magicData = try handle.read(upToCount: MemoryLayout<UInt32>.size),
+              magicData.count == MemoryLayout<UInt32>.size else {
+            throw PlayCoverError.appCorrupted
+        }
+        let magic = magicData.extract(UInt32.self)
+        guard magic == FAT_MAGIC || magic == FAT_CIGAM else { return 0 }
 
-                let dylibName = String(data: binary,
-                                       offset: offset,
-                                       commandSize: Int(dylibCommand.cmdsize),
-                                       loadCommandString: dylibCommand.dylib.name)
-                if dylibName == playToolsPath.esc {
-                    result = true
-                    return true
+        try handle.seek(toOffset: 0)
+        let fatHeaderSize = MemoryLayout<fat_header>.size
+        guard let fatHeaderData = try handle.read(upToCount: fatHeaderSize),
+              fatHeaderData.count == fatHeaderSize else {
+            throw PlayCoverError.appCorrupted
+        }
+        let shouldSwapFat = magic == FAT_CIGAM
+        var fatHeader = fatHeaderData.extract(fat_header.self)
+        if shouldSwapFat { swap_fat_header(&fatHeader, NXHostByteOrder()) }
+
+        let archCount = Int(fatHeader.nfat_arch)
+        let archSize = MemoryLayout<fat_arch>.size
+        let archTableSize = archCount * archSize
+        guard archCount > 0, archTableSize <= 1024 * 1024,
+              let archData = try handle.read(upToCount: archTableSize),
+              archData.count == archTableSize else {
+            throw PlayCoverError.appCorrupted
+        }
+
+        for index in 0..<archCount {
+            var arch = archData.extract(fat_arch.self, offset: index * archSize)
+            if shouldSwapFat { swap_fat_arch(&arch, 1, NXHostByteOrder()) }
+            if arch.cputype == CPU_TYPE_ARM64 {
+                return UInt64(arch.offset)
+            }
+        }
+        throw PlayCoverError.failedToStripBinary
+    }
+
+    private struct MachOLoadCommands {
+        let data: Data
+        let ncmds: UInt32
+        let shouldSwap: Bool
+    }
+
+    private static func loadCommandsData(
+        in handle: FileHandle,
+        at sliceOffset: UInt64
+    ) throws -> MachOLoadCommands {
+        try handle.seek(toOffset: sliceOffset)
+        let headerSize = MemoryLayout<mach_header_64>.size
+        guard let headerData = try handle.read(upToCount: headerSize),
+              headerData.count == headerSize else {
+            throw PlayCoverError.appCorrupted
+        }
+        var header = headerData.extract(mach_header_64.self)
+        let shouldSwap = header.magic == MH_CIGAM_64
+        guard header.magic == MH_MAGIC_64 || shouldSwap else {
+            throw PlayCoverError.appCorrupted
+        }
+        if shouldSwap { swap_mach_header_64(&header, NXHostByteOrder()) }
+
+        let commandsSize = Int(header.sizeofcmds)
+        guard commandsSize > 0, commandsSize <= 16 * 1024 * 1024,
+              let commandsData = try handle.read(upToCount: commandsSize),
+              commandsData.count == commandsSize else {
+            throw PlayCoverError.appCorrupted
+        }
+        return MachOLoadCommands(data: commandsData, ncmds: header.ncmds, shouldSwap: shouldSwap)
+    }
+
+    static func installedInExec(atURL url: URL) throws -> Bool {
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+
+        let sliceOffset = try arm64SliceOffset(in: handle)
+        let commands = try loadCommandsData(in: handle, at: sliceOffset)
+        let commandsData = commands.data
+
+        var offset = 0
+        let expectedDylib = playToolsPath.esc
+        for _ in 0..<commands.ncmds {
+            guard offset + MemoryLayout<load_command>.size <= commandsData.count else {
+                throw PlayCoverError.appCorrupted
+            }
+            let loadCommand = commandsData.extract(load_command.self,
+                                                   offset: offset,
+                                                   swap: commands.shouldSwap ? swap_load_command : nil)
+            let cmdSize = Int(loadCommand.cmdsize)
+            let commandEnd = offset + cmdSize
+            guard commandEnd <= commandsData.count && commandEnd > offset else {
+                throw PlayCoverError.appCorrupted
+            }
+            if loadCommand.cmd == UInt32(LC_LOAD_DYLIB),
+               cmdSize >= MemoryLayout<dylib_command>.size {
+                let dylibCommand = commandsData.extract(dylib_command.self,
+                                                        offset: offset,
+                                                        swap: commands.shouldSwap ? swap_dylib_command : nil)
+                let strOffset = Int(dylibCommand.dylib.name.offset)
+                if strOffset >= MemoryLayout<dylib_command>.size && strOffset < cmdSize {
+                    let dylibName = String(data: commandsData,
+                                           offset: offset,
+                                           commandSize: cmdSize,
+                                           loadCommandString: dylibCommand.dylib.name)
+                    if dylibName == expectedDylib {
+                        return true
+                    }
                 }
             }
-            return false
+            offset = commandEnd
         }
-        return result
+        return false
     }
 
     static func isInstalled() throws -> Bool {

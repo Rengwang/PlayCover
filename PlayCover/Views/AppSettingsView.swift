@@ -138,8 +138,12 @@ struct AppSettingsView: View {
             dismiss()
         }
         .task(priority: .background) {
-            hasPlayTools = viewModel.app.hasPlayTools()
-            hasAlias = viewModel.app.hasAlias()
+            let appRef = viewModel.app
+            let (installed, aliasExists) = await Task.detached(priority: .utility) {
+                (appRef.hasPlayTools(), appRef.hasAlias())
+            }.value
+            hasPlayTools = installed
+            hasAlias = aliasExists
         }
         .padding()
         .frame(height: 400)

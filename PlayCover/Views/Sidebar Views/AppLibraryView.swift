@@ -96,11 +96,14 @@ struct AppLibraryView: View {
         .searchable(text: $searchString, placement: .toolbar)
         .onChange(of: searchString, perform: { value in
             appsVM.searchText = value
-            appsVM.fetchApps()
+            appsVM.applyFilter()
         })
         .onAppear {
             appsVM.searchText = ""
-            appsVM.fetchApps()
+            appsVM.applyFilter()
+            if !appsVM.hasLoadedOnce && !appsVM.updatingApps {
+                appsVM.fetchApps()
+            }
         }
         .onChange(of: isList, perform: { value in
             UserDefaults.standard.set(value, forKey: "AppLibraryView")
@@ -217,7 +220,7 @@ struct AppDisplayView: View {
 
     var body: some View {
         if isList {
-            VStack {
+            LazyVStack {
                 playAppViews
                 Spacer()
             }

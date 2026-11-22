@@ -61,8 +61,7 @@ extension PlayApp {
 
                 // LaunchServices on macOS 27 will not open the alias while Info.plist is a
                 // symlink: it fails with -54 (permErr) and the user sees "does not have
-                // permission to open (null)". A real copy is enough, and it stays current
-                // because the alias is rebuilt on every PlayApp init and before every launch.
+                // permission to open (null)". Use a real copy and refresh it after signing.
                 if ctxUrl.lastPathComponent == "Info.plist" {
                     try FileManager.default.copyItem(at: ctxUrl, to: aliasItem)
                 } else {
@@ -77,5 +76,44 @@ extension PlayApp {
 
     func removeAlias() {
         FileManager.default.delete(at: aliasURL)
+    }
+
+    func ensureAliasIfNeeded() {
+        let fileManager = FileManager.default
+        let aliasInfo = aliasURL.appendingPathComponent("Info.plist")
+        let srcInfo = url.appendingPathComponent("Info.plist")
+        let aliasExec = aliasURL.appendingPathComponent(info.executableName)
+        let srcExec = url.appendingPathComponent(info.executableName)
+
+        let resourceKeys: Set<URLResourceKey> = [
+            .isSymbolicLinkKey,
+            .contentModificationDateKey,
+            .fileSizeKey
+        ]
+
+        if fileManager.fileExists(atPath: aliasURL.path),
+           fileManager.fileExists(atPath: aliasInfo.path),
+           fileManager.fileExists(atPath: srcInfo.path),
+           let aliasInfoValues = try? aliasInfo.resourceValues(forKeys: resourceKeys),
+           let srcInfoValues = try? srcInfo.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey]),
+           aliasInfoValues.isSymbolicLink == false,
+           let aliasSize = aliasInfoValues.fileSize,
+           let srcSize = srcInfoValues.fileSize,
+           aliasSize == srcSize,
+           let aliasDate = aliasInfoValues.contentModificationDate,
+           let srcDate = srcInfoValues.contentModificationDate,
+           aliasDate >= srcDate,
+           !info.executableName.isEmpty,
+           let execDest = try? fileManager.destinationOfSymbolicLink(atPath: aliasExec.path) {
+            let resolvedDest = URL(fileURLWithPath: execDest, relativeTo: aliasURL)
+                .standardizedFileURL.path
+            if resolvedDest == srcExec.standardizedFileURL.path,
+               fileManager.fileExists(atPath: aliasExec.path) {
+                return
+            }
+        }
+
+        removeAlias()
+        createAlias()
     }
 }

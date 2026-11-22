@@ -14,6 +14,7 @@ class Cacher {
     static let shared = Cacher()
     @ImageCache private var imageCache
     let cache = DataCache.instance
+    private let appIconCache = NSCache<NSString, NSImage>()
     /// We can create a custom cache like this (default values are as the same as below):
     /// `let cache = DataCache(name: "PlayCoverCache")`
     /// `cache.maxDiskCacheSize = 100*1024*1024`      // 100 MB
@@ -26,10 +27,12 @@ class Cacher {
             countLimit: 400,
             totalCostLimit: 4*1024*1024
         )
+        appIconCache.countLimit = 256
     }
 
     func removeImageCache() {
         imageCache.removeCache()
+        appIconCache.removeAllObjects()
     }
 
     func resolveITunesData(_ link: String) async {
@@ -38,11 +41,32 @@ class Cacher {
         }
     }
 
+    func cachedAppIcon(forPath path: String) -> NSImage? {
+        appIconCache.object(forKey: path as NSString)
+    }
+
+    func loadAppIcon(forPath path: String) async -> NSImage {
+        if let cached = cachedAppIcon(forPath: path) {
+            return cached
+        }
+        let icon = await Task.detached(priority: .userInitiated) {
+            NSWorkspace.shared.icon(forFile: path)
+        }.value
+        appIconCache.setObject(icon, forKey: path as NSString)
+        return icon
+    }
+
     func getLocalIcon(bundleId: String) -> NSImage? {
         guard let app = AppsVM.shared.apps.first(where: { $0.info.bundleIdentifier == bundleId }) else {
             return nil
         }
-        return NSWorkspace.shared.icon(forFile: app.url.path)
+        let path = app.url.path
+        if let cached = cachedAppIcon(forPath: path) {
+            return cached
+        }
+        let icon = NSWorkspace.shared.icon(forFile: path)
+        appIconCache.setObject(icon, forKey: path as NSString)
+        return icon
     }
 
 }
