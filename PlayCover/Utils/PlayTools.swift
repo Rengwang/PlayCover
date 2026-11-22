@@ -26,6 +26,13 @@ class PlayTools {
         .appendingPathComponent("Frameworks")
         .appendingPathComponent("PlayTools")
         .appendingPathExtension("framework")
+    /// iOS slice shipped alongside the app for `export == true` (real-device IPAs must not
+    /// receive the Mac Catalyst binary).
+    private static let bundledIOSPlayToolsFramework = Bundle.main.bundleURL
+        .appendingPathComponent("Contents")
+        .appendingPathComponent("Resources")
+        .appendingPathComponent("PlayTools-iOS")
+        .appendingPathExtension("framework")
 
     public static var playCoverContainer: URL {
         let playCoverPath = FileManager.default.homeDirectoryForCurrentUser
@@ -58,32 +65,58 @@ class PlayTools {
     static func installOnSystemSync() throws {
         Log.shared.log("Installing PlayTools")
 
-        // Check if Frameworks folder exists, if not, create it
         if !FileManager.default.fileExists(atPath: frameworksURL.path) {
-            try FileManager.default.createDirectory(
-                atPath: frameworksURL.path,
-                withIntermediateDirectories: true,
-                attributes: [:])
+            try FileManager.default.createDirectory(atPath: frameworksURL.path,
+                                                    withIntermediateDirectories: true,
+                                                    attributes: [:])
         }
 
-        // Install version of PlayTools bundled with PlayCover
-        Log.shared.log("Copying PlayTools to Frameworks")
-        if FileManager.default.fileExists(atPath: playToolsFramework.path)
-            || (try? FileManager.default.destinationOfSymbolicLink(atPath: playToolsFramework.path)) != nil {
-            try FileManager.default.removeItem(at: playToolsFramework)
+        // Stage first, verify, then swap atomically. Removing the live framework before the copy
+        // would leave every installed app without PlayTools if the copy fails halfway.
+        let staging = frameworksURL.appendingPathComponent("PlayTools.framework.staging")
+        if FileManager.default.fileExists(atPath: staging.path) {
+            try FileManager.default.removeItem(at: staging)
         }
-        try FileManager.default.copyItem(at: bundledPlayToolsFramework, to: playToolsFramework)
+        defer { try? FileManager.default.removeItem(at: staging) }
+
+        try FileManager.default.copyItem(at: bundledPlayToolsFramework, to: staging)
+
+        guard try Macho.buildPlatform(at: staging.appendingPathComponent("PlayTools")) == 6 else {
+            throw NSError(domain: "PlayCover", code: 1, userInfo: [
+                NSLocalizedDescriptionKey: "Bundled PlayTools is not a Mac Catalyst binary"
+            ])
+        }
+        _ = try? Shell.run("/usr/bin/codesign", "-v", staging.path)
+
+        if FileManager.default.fileExists(atPath: playToolsFramework.path) {
+            _ = try FileManager.default.replaceItemAt(playToolsFramework, withItemAt: staging)
+        } else {
+            try FileManager.default.moveItem(at: staging, to: playToolsFramework)
+        }
     }
 
-    static func installInIPA(_ exec: URL) async throws {
+    /// Path of the iOS slice used when exporting an IPA for a real device.
+    private static func iosInjectPath() throws -> URL {
+        let executable = bundledIOSPlayToolsFramework.appendingPathComponent("PlayTools")
+        guard FileManager.default.fileExists(atPath: executable.path) else {
+            throw NSError(domain: "PlayCover", code: 2, userInfo: [
+                NSLocalizedDescriptionKey: "PlayTools-iOS.framework is missing from Resources; "
+                    + "rebuild with ./sync_upstream.sh build"
+            ])
+        }
+        return executable
+    }
+
+    static func installInIPA(_ exec: URL, export: Bool = false) async throws {
         var binary = try Data(contentsOf: exec)
         try Macho.stripBinary(&binary)
 
+        let injectPath = export ? try iosInjectPath() : playToolsPath
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             Inject.injectMachO(machoPath: exec.path,
                                cmdType: .loadDylib,
                                backup: false,
-                               injectPath: playToolsPath.path,
+                               injectPath: injectPath.path,
                                finishHandle: { result in
                 guard result else {
                     continuation.resume(throwing: "Failed to inject PlayTools into \(exec.lastPathComponent)")
@@ -198,8 +231,8 @@ class PlayTools {
                             .appendingPathComponent("PlayTools")
                             .appendingPathExtension("dylib")
 
-                        let tools = bundledPlayToolsFramework
-                            .appendingPathComponent("PlayTools")
+                        // Export targets a real device: the Catalyst binary would not load there.
+                        let tools = try iosInjectPath()
 
                         if FileManager.default.fileExists(atPath: libraryTarget.path) {
                             try FileManager.default.removeItem(at: libraryTarget)

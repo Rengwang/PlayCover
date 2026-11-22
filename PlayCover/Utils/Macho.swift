@@ -596,6 +596,48 @@ extension Macho {
         return nil
     }
 
+    /// Returns the `LC_BUILD_VERSION` platform of the first architecture in `url`
+    /// (2 = iOS, 6 = Mac Catalyst).
+    static func buildPlatform(at url: URL) throws -> UInt32? {
+        let binary = try Data(contentsOf: url)
+        guard binary.count >= 32 else { return nil }
+
+        var sliceStart = 0
+        var sliceEnd = binary.count
+        if binary.count >= 8 {
+            let magic = binary.extract(UInt32.self)
+            if magic == FAT_MAGIC || magic == FAT_CIGAM {
+                var header = binary.extract(fat_header.self)
+                let swapped = header.magic == FAT_CIGAM
+                if swapped { swap_fat_header(&header, NXHostByteOrder()) }
+                guard header.nfat_arch > 0 else { return nil }
+                var arch = binary.extract(fat_arch.self, offset: MemoryLayout.size(ofValue: header))
+                if swapped { swap_fat_arch(&arch, 1, NXHostByteOrder()) }
+                sliceStart = Int(arch.offset)
+                sliceEnd = sliceStart + Int(arch.size)
+            }
+        }
+        guard sliceEnd <= binary.count, sliceEnd - sliceStart >= 32 else { return nil }
+
+        var header = binary.extract(mach_header_64.self, offset: sliceStart)
+        let shouldSwap = header.magic == MH_CIGAM_64
+        guard header.magic == MH_MAGIC_64 || shouldSwap else { return nil }
+        if shouldSwap { swap_mach_header_64(&header, NXHostByteOrder()) }
+
+        var offset = sliceStart + MemoryLayout<mach_header_64>.size
+        for _ in 0..<header.ncmds {
+            guard offset + 8 <= sliceEnd else { break }
+            let cmd = binary.extract(load_command.self, offset: offset,
+                                     swap: shouldSwap ? swap_load_command : nil)
+            if cmd.cmd == UInt32(LC_BUILD_VERSION), offset + 12 <= sliceEnd {
+                return readU32(binary, offset: offset + 8, swap: shouldSwap)
+            }
+            guard cmd.cmdsize > 0 else { break }
+            offset += Int(cmd.cmdsize)
+        }
+        return nil
+    }
+
     /// `add sp, Xn, #0` returns the source register, excluding sp/fp.
     private static func poisonedStackPointer(_ word: UInt32) -> Int? {
         guard (word & 0xFFFF_FC00) == 0x9100_0000 else { return nil }
