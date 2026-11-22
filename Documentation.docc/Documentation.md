@@ -1,13 +1,9 @@
 # ``PlayCover``
 
-<!--@START_MENU_TOKEN@-->Summary<!--@END_MENU_TOKEN@-->
+PlayCover installs and runs supported iOS applications on Apple silicon Macs.
 
 ## Overview
 
-<!--@START_MENU_TOKEN@-->Text<!--@END_MENU_TOKEN@-->
+The host manages the application library, installation, signing, and settings. PlayTools is the companion runtime framework for adaptive windows, input mapping, and compatibility with iOS APIs.
 
-## Topics
-
-### <!--@START_MENU_TOKEN@-->Group<!--@END_MENU_TOKEN@-->
-
-- <!--@START_MENU_TOKEN@-->``Symbol``<!--@END_MENU_TOKEN@-->
+See the [maintainer guide](https://github.com/Rengwang/PlayCover/blob/develop/SESSION_MODIFICATIONS.md) for the paired workspace and testing workflow.

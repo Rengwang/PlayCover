@@ -1,201 +1,74 @@
-# PlayCover 智能窗口适配与后台静默验证改动整理
+# PlayCover 与 PlayTools 维护手册
 
-本仓库为 [`PlayCover/PlayCover`](https://github.com/PlayCover/PlayCover)（基线 `develop@24bbed7`）的个人 Fork，配合同步修改的 [`Rengwang/PlayTools`](https://github.com/Rengwang/PlayTools)（基线 `master@fbc8880`），汇总了多轮会话中针对 **IPA 窗口自适应重排、等比画布缩放、本地无证书构建以及 Sidecar 副屏零打扰自动化测试** 的全部源码改动与实机验证记录。
+本手册适用于个人 Fork 的双仓库工作区。PlayCover 宿主负责 IPA 安装、Mach-O 转换、签名和应用配置。PlayTools 运行在已注入的应用进程内，负责窗口、输入和 iOS API 兼容。Git 历史保存历次实现和完整变更，本文记录当前维护流程及已验证的边界。
 
----
+| 仓库 | 分支 | Fork | 上游 |
+| --- | --- | --- | --- |
+| PlayCover | `develop` | [Rengwang/PlayCover](https://github.com/Rengwang/PlayCover) | [PlayCover/PlayCover](https://github.com/PlayCover/PlayCover) |
+| PlayTools | `master` | [Rengwang/PlayTools](https://github.com/Rengwang/PlayTools) | [PlayCover/PlayTools](https://github.com/PlayCover/PlayTools) |
 
-## 一、核心目标与背景痛点
+## 构建、安装与同步
 
-原版 PlayCover / PlayTools 在日常运行 iOS 应用时存在以下问题：
-1. **默认分辨率锁死**：原版默认 `resolution = 1`（基于显示器固定尺寸）或固定分辨率，只在 `resolution == 6` 时开放窗口调整，且普通应用拖动窗口时只改外部裁剪框、内部 UIKit 不触发重排。
-2. **`Resizable (6)` 机制不完整**：仅缓存首个 `UIWindow`，多窗口或开屏切换后易失效；未 Hook `UIScreen.nativeBounds`，缺少 `UICollectionView`/`UITableView` 递归布局刷新。
-3. **固定比例竖屏/横屏应用容易被裁切**：对于未声明 iPad 自适应布局（如 `UIRequiresFullScreen = true` 或仅支持单一方向）的应用，自由缩窄窗口会导致界面被截断。
-4. **部分第三方自定义 `UICollectionViewLayout` 懒计算导致空白**：如小红书等瀑布流/详情页自定义布局在初次 `prepareLayout` 后或二次进入时 `collectionViewContentSize` 仍返回 `{0, 0}`，导致页面空白或错位。
-5. **需要无打扰、不抢鼠标的真机 UI 验证方案**：macOS 全局只有一个实体光标，传统 GUI 自动化会抢占用户主屏与鼠标；通过 `PLAYCOVER_TARGET_SCREEN=sidecar` + `PLAYTOOLS_AUTOMATION=1` + `sidecar_runner` 实现副屏静默启动、进程内触控注入与按窗口 ID 静默截图。
+从同时包含 `PlayCover/`、`PlayTools/` 和 `sync_upstream.sh` 的工作区根目录执行。
 
----
+```sh
+./sync_upstream.sh build
+```
 
-## 二、总体架构：双模式智能自适应引擎（`resolution = 7`）
+脚本构建原生 iOS 和 Mac Catalyst 两个 arm64 PlayTools 切片，并把 macOS 布局的 `AKInterface.bundle` 装入各切片。PlayCover 使用 Catalyst 切片，真机 IPA 导出使用随应用资源携带的 `PlayTools-iOS.framework`。本地构建采用 Ad-Hoc 签名。最终应用在 `build/PlayCover/Release/PlayCover.app`，双切片在 `PlayCover/Carthage/Build/PlayTools.xcframework`。
 
-将默认分辨率模式升级为 **`7 - 智能自适应（Smart Auto-Adapt）`**，在安装及启动阶段依据 `Info.plist` 自动分流：
+维护命令如下。
 
-1. **模式 A：自由拖动自适应布局（`Adaptive`）**
-   - **判定条件**：`UIDeviceFamily` 包含 `2`（支持 iPad）、`UIRequiresFullScreen != true`，且同时支持横竖屏或声明了 `UIApplicationSceneManifest`。
-   - **行为**：放开自由缩放（最小内容区 `360x540`），动态同步 `UIScreen.bounds`、`applicationFrame`、`nativeBounds` 到当前活跃主 `UIWindow` 尺寸，并在尺寸变化时递归刷新 `UIViewController`、`UICollectionViewLayout` 与 `UITableView`。
-   - **运行时溢出兜底**：稳定后若检测到非横向滚动主体视图发生横向溢出（`> 24pt`，排除 `TabScroll`/`QueuingScrollView`/`PageView`/`Carousel`/`Banner` 与动画图层），自动无缝降级为模式 B。
-2. **模式 B：推荐比例等比画布缩放（`Scaled`）**
-   - **判定条件**：强制全屏或单一方向应用（如仅竖屏 `9:16 -> 414x736`、仅横屏 `16:9 -> 1280x720`、纯 iPad 竖屏 `3:4 -> 768x1024`）。
-   - **行为**：AppKit 锁定 `NSWindow.contentAspectRatio`；UIKit 将主 `UIWindow.bounds` 保持在逻辑画布尺寸，通过 `UIWindow.transform` 等比居中缩放并钳制直接子视图（如 `UITransitionView` / `TopmostView`）边界，同时修正 `contentLayoutRect` 下的鼠标/触控坐标映射。
+| 命令 | 行为 |
+| --- | --- |
+| `./sync_upstream.sh check` | 拉取上游引用，列出上游新提交和本地补丁栈。 |
+| `./sync_upstream.sh export-patches` | 重新导出两个仓库相对上游的提交到 `patches/PlayCover/` 和 `patches/PlayTools/`。 |
+| `./sync_upstream.sh sync` | 要求工作树干净，创建备份分支、导出补丁，再将本地提交 rebase 到上游。 |
+| `./sync_upstream.sh build` | 构建并签署本机调试用 Release 应用。 |
+| `./sync_upstream.sh push` | 对两个 Fork 的对应分支执行 `--force-with-lease`。 |
 
----
+上游更新后按 `check`、`sync`、`build` 的顺序处理，验证完成后再决定是否发布分支。遇到 rebase 冲突时可在对应仓库使用 `git rebase --continue` 或 `git rebase --abort`。
 
-## 三、`PlayCover` 宿主端修改明细（9 个文件）
+批量或自动化安装可以调用构建产物的 `Contents/MacOS/PlayCover --install-ipa <path>`。成功时输出 `INSTALLED|<bundleId>|<appPath>|<supportsAdaptive>|<ratio>`，并安装本机 PlayTools 运行时。框架安装先暂存并校验签名，再原子替换。面向 GitHub 的签名和公证仍由 [fastlane 配置](fastlane/Fastfile) 及[发布工作流](.github/workflows/1.build_release.yml)负责。
 
-### 1. 应用能力识别与智能默认配置
-- [`PlayCover/Model/AppInfo.swift`](PlayCover/Model/AppInfo.swift)
-  - 新增 `deviceFamilies`、`supportsIPad`、`requiresFullScreen`、`supportedOrientations`。
-  - 新增 `supportsAdaptiveWindowLayout`、`recommendedAspectRatio`（`16:9` / `3:4` / `9:16`）与 `recommendedLogicalResolution`（`1280x720` / `768x1024` / `414x736`）。
-- [`PlayCover/Model/AppSettings.swift`](PlayCover/Model/AppSettings.swift)
-  - 将 `AppSettingsData.resolution` 默认值与缺省解码值由 `1` 改为 `7`（智能自适应）。
-  - 新增 `applySmartAdaptDefaults(to:info:)`：自适应应用默认自由比例、初始窗口 `900x760`；固定布局应用自动写入推荐长宽比与逻辑尺寸；同步接入 `init`、`sync()` 与 `reset()`。
+## 运行时行为
 
-### 2. 设置界面与本地化文案
-- [`PlayCover/Views/AppSettingsView.swift`](PlayCover/Views/AppSettingsView.swift)
-  - 分辨率选择器新增选项 `7`（`settings.picker.adaptiveRes.7`）。
-  - 选中智能自适应时展示当前识别结果（「自适应窗口」或「推荐比例 (W:H)」）。
-  - 重构 `setResolution()` 以统一更新 `updatedSettings` 并在切换到 `7` 时重新应用智能默认参数。
-- [`PlayCover/en.lproj/Localizable.strings`](PlayCover/en.lproj/Localizable.strings) & [`PlayCover/zh-Hans.lproj/Localizable.strings`](PlayCover/zh-Hans.lproj/Localizable.strings)
-  - 补充 `Smart Auto-Adapt` / `智能自适应`、`Adaptive Window` / `自适应窗口`、`Recommended Aspect (%@)` / `推荐比例 (%@)` 等文案（同时补全了缺失的中文 `settings.picker.adaptiveRes.6` 及比例文案）。
+- **窗口布局**　默认 `resolution = 7` 为 Smart Auto-Adapt。根据设备族、窗口能力、方向和场景声明选择自由重排或等比画布。稳定后出现明显横向溢出时可自动切到等比模式。缩放同步同场景可见应用窗口，输入命中使用 UIKit 坐标转换。
+- **设备和界面**　`layoutIdiom = 3` 为 iPhone Duo，标识为 `iPhone19,4`。显式 iPhone、iPad 和 Duo 协调设备与界面的 idiom。Auto 由 UIKit 决定布局，设备型号按配置读取。`uiScale`、原生平台身份和 SDK Shift 可按应用选择。
+- **低功耗应用模式**　默认关闭按键映射、Discord 动态与电池及温控伪装。手柄输入按需启停。窗口热路径与 PlayChain SQLite 连接复用。游戏模式可在应用设置页启用相应功能。
+- **PlayChain**　完整属性参与查询。支持查询上限、重复项返回码和永久密钥标签。数据库版本 2 为既有记录补充不透明标识。持久引用在属性更新后保持稳定，并可用于读取、更新与删除。无法约束的写操作返回错误。
+- **Mach-O 和沙盒**　宿主镜像转换为 arm64 Catalyst。Swift overlay 按实际依赖和系统共享缓存解析，应用随附库优先。系统加载的 `.appex` 和原生组件 `.bundle` 保留各自平台。扫描指纹覆盖镜像相对路径、大小、时间与系统版本。沙盒兼容规则维护系统 locale、时区别名和字体别名的读取。旧版 `ProxyShield.dylib` 的安装残留由迁移代码清理。
+- **插件、资源和系统框架**　`AKInterface` 提供桌面窗口、鼠标和键盘桥接。`PlayTools.strings` 随 IPA 安装和应用启动复制，以独立名称提供运行时本地化。
 
-### 3. 安装链路、无头 CLI 入口与本地签名构建
-- [`PlayCover/Utils/PlayTools.swift`](PlayCover/Utils/PlayTools.swift)
-  - 拆分同步安装方法 `installOnSystemSync()`，并在复制前兼容清理遗留的符号链接目标。
-  - 将 `installInIPA(_:)` 改造为 `withCheckedThrowingContinuation` 异步等待 `Inject.injectMachO`、插件复制、用户 dylib 同步及重签名真正完成，修复连续安装/启动竞态。
-- [`PlayCover/AppInstaller/Installer.swift`](PlayCover/AppInstaller/Installer.swift)
-  - 新增 `Installer.installCLI(ipaUrl:)`：支持无头 CLI 安装（跳过交互式 Mac App Store 弹窗、自动创建 `PlayChain` 目录、同步设置、签名、生成 LaunchServices alias 与去 quarantine）。
-- [`PlayCover/Views/PlayCoverApp.swift`](PlayCover/Views/PlayCoverApp.swift)
-  - 新增 `@main enum PlayCoverLauncher`，支持 `--install-ipa <path>` / `--install-ipa=<path>` 命令行无界安装模式（`.prohibited` 激活策略，不抢占桌面焦点），输出结构化结果 `INSTALLED|<bundleId>|<appPath>|<supportsAdaptive>|<ratio>`。
-- [`PlayCover.xcodeproj/project.pbxproj`](PlayCover.xcodeproj/project.pbxproj)
-  - 调整 `Sign PlayTools & Sparkle` 构建脚本，支持无签名证书时自动回退 Ad-Hoc（`-`）并仅在非 `-` 时附加 `-o runtime`。
-  - 将 Debug / Release 的 `ENABLE_HARDENED_RUNTIME` 设为 `NO`，以便本地无开发者证书调试运行。
+## 自动化与自检
 
----
+| 设置 | 用途 |
+| --- | --- |
+| `PLAYCOVER_TARGET_SCREEN=sidecar` | 已连接随航时优先将新测试窗口放到副屏。 |
+| `PLAYTOOLS_AUTOMATION=1` | 启用进程内 JSON IPC。目录为 `~/Library/Containers/io.playcover.PlayCover/Automation/<bundleId>/`。 |
+| `PLAYTOOLS_SELFTEST=1` | 生成 `Automation/selftest_<bundleId>.json`，包含 PID、时间、逐项结果与观测值。 |
+| `PLAYTOOLS_SELFTEST_GROUP` | 可指定 `keychain`、`platform` 或 `geometry`。探针构建还支持 `entitlements`、`media`。 |
 
-## 四、`PlayTools` 注入框架修改明细（7 个文件，详见 [`Rengwang/PlayTools`](https://github.com/Rengwang/PlayTools)）
+IPC 通过 `cmd.json` 接收 `dump`、`dumpTree`、`tap`、`swipe` 或 `setMode`，通过 `state.json` 返回结果。`selftestGeometry` 可在缩放后重新校验坐标往返和画布适配。窗口测试应核对实际落点，触控测试使用进程内事件。
 
-1. **[`AKPlugin.swift`](https://github.com/Rengwang/PlayTools/blob/master/AKPlugin.swift) & [`Plugin.swift`](https://github.com/Rengwang/PlayTools/blob/master/Plugin.swift)**
-   - 新增 `AKAppLayoutInfo` 解析 `Info.plist` 布局能力；基于 `resolutionSetting == 7` 初始化自适应最小尺寸 (`360x540`) 或推荐比例锁定（`contentAspectRatio`）。
-   - 多窗口跟踪（`configuredWindows` / `verifiedTargetWindows`），监听 `didFinishLaunching` 与 `NSWindow` 激活/曝光通知。
-   - 新增 `applyWindowAspectLock`、`clearWindowAspectLock`、`placeWindowOnTargetScreenIfNeeded` 与 `contentLayoutRect`。
-   - 支持 `PLAYCOVER_TARGET_SCREEN=sidecar|secondary`，在窗口初始化时直接居中并钳制到 Sidecar 副屏可见区域。
-2. **[`PlayTools/PlaySettings.swift`](https://github.com/Rengwang/PlayTools/blob/master/PlayTools/PlaySettings.swift)**
-   - 默认 `resolution = 7`，新增 `smartAdaptive`、`dynamicWindowMode`，扩展 `resizableWindow`（`6 || 7`），并为 `AppSettingsData` 实现全字段安全缺省解码。
-3. **[`PlayTools/PlayScreen.swift`](https://github.com/Rengwang/PlayTools/blob/master/PlayTools/PlayScreen.swift)**
-   - 实现 `PlayDisplayMode`（`.adaptive` / `.scaled`）、`activePrimaryWindow` 评分筛选与 `resolveBoundsResizable`。
-   - 实现 `.scaled` 模式下 `UIWindow` `bounds`/`center`/`transform` 等比缩放与直接子视图/根视图尺寸边界钳制（解决 `TopmostView` 等残留全屏尺寸导致的画面裁切）。
-   - 实现 `.adaptive` 模式下宿主窗口 resize 节流与视图树递归刷新（`UICollectionViewLayout.invalidateLayout()`、`UITableView` cell 刷新）。
-   - 实现防误触的运行时横向溢出自动降级检测（`evaluateRuntimeNonAdaptiveFallback`）。
-   - 内置 `PLAYTOOLS_AUTOMATION=1` 文件 IPC 服务（`~/Library/Containers/io.playcover.PlayCover/Automation/<bundleId>/{ready.json,cmd.json,state.json}`），支持 `dump`、`dumpTree`、`tap`、`swipe`（经 `PTFakeMetaTouch` 进程内派发）与 `setMode`，同时返回 `clippedViews` 与 `interactiveElements`。
-4. **[`PlayTools/Controls/PTFakeTouch/NSObject+Swizzle.m`](https://github.com/Rengwang/PlayTools/blob/master/PlayTools/Controls/PTFakeTouch/NSObject+Swizzle.m)**
-   - 增加空类/空方法 swizzle 保护；在 `dynamicWindowMode` 下 Hook `UIScreen`（`bounds`/`applicationFrame`/`nativeBounds`/`nativeScale`/`scale`）、`UIWindow`（`layoutSubviews`/`setFrame:`/`setBounds:`/`setRootViewController:`/`didAddSubview:`）与 `UIViewController`（`viewWillLayoutSubviews`/`viewDidAppear:`）。
-   - **通用自定义 `UICollectionViewLayout` 懒计算修复**：通过 `dladdr` 识别非系统且非 PlayTools 本身的自定义 `UICollectionViewLayout` 子类，Hook `prepareLayout`、`collectionViewContentSize`、`invalidateLayoutWithContext:` 及 `UICollectionView` 的初始化/切换布局/`layoutSubviews`，在 `collectionViewContentSize` 首次返回 `{0, 0}` 时自动触发一次 `layoutAttributesForElementsInRect:` 预热并维护重入保护与尺寸缓存，修复部分自定义瀑布流/详情页布局在 Catalyst 下内容尺寸未即时计算的问题。
-5. **[`PlayTools/Controls/Frontend/EventAdapter/Mouse/Instances/TouchscreenMouseEventAdapter.swift`](https://github.com/Rengwang/PlayTools/blob/master/PlayTools/Controls/Frontend/EventAdapter/Mouse/Instances/TouchscreenMouseEventAdapter.swift)**
-   - 在 `dynamicWindowMode` 与常规模式下统一改用 `contentLayoutRect` 计算归一化坐标，修复标题栏高度偏移与等比缩放后的点击偏移。
-6. **[`PlayTools/MysticRunes/PlayedAppleDB.swift`](https://github.com/Rengwang/PlayTools/blob/master/PlayTools/MysticRunes/PlayedAppleDB.swift)**
-   - 打开 SQLite 数据库前自动确保 `PlayChain` 目录存在。
+构建权限和媒体探针时，在单独的 xcconfig 中加入以下设置。
 
----
+```xcconfig
+SWIFT_ACTIVE_COMPILATION_CONDITIONS = $(inherited) PLAYTOOLS_FRAMEWORK_PROBES
+```
 
-## 五、配套工具与 Sidecar 实机验证记录
+通过 `XCODE_XCCONFIG_FILE` 传给 `./sync_upstream.sh build`。用独立测试应用验证会申请权限或改动音频会话的入口。普通应用上的探针只运行适用项。本机测试辅助脚本和原始报告位于工作区 `build/diagnostics/`。
 
-### 1. 全局后台静默 Computer Use 技能沉淀
-- 已将零抢鼠标、副屏隔离自动化方案总结并安装为全局 Antigravity Skill：`~/.gemini/config/skills/silent-computer-use/`（包含 `SKILL.md`、`references/architecture.md`、`scripts/sidecar_runner.swift` 与编译后的 `sidecar_runner`）。
+## 验证与已知边界
 
-### 2. 多应用实机验证结果（Sidecar 副屏，`clippedViewCount = 0`）
-- **小红书（`com.xingin.discover`）**：
-  - 验证了宽屏 4 列瀑布流（`911x770` / `980x780`）、窄屏 3 列自适应重排（`420x760`）、`scaled 9:16`（`479x880` @ `1.504x`、`321x599` @ `1.007x`）以及从缩放恢复自适应宽屏，`clippedViewCount` 均为 `0`。（注：后期未登录访客点击首页卡片会触发应用自身的 `XYAuthWelcomeEntranceViewController` 登录墙拦截。）
-- **酷安（`com.coolapk.app`）**：
-  - 验证了宽屏（`980x780`）、窄屏（`420x760`）、回宽屏、`scaled 9:16`（`479x880`、`321x599`）、帖子详情页宽/窄屏切换以及“数码” Tab 多列网格布局，`clippedViewCount` 均为 `0`（注：刚跨模式大幅缩放窗口瞬间，顶部轮播图会保留旧水平滚动偏移直到下次分页吸附）。
-- **哔哩哔哩（`tv.danmaku.bilianime`）**：
-  - 在前期构建中验证了首页推荐窄屏 2 列 ↔ 宽屏 3 列自适应、“分区”网格重排，以及修复 `Scaled` 模式下 `TopmostView` 尺寸残留与 `BFCTabScrollView` 误触发降级。
-- **公考雷达（`com.midas.gkld`）**：
-  - 验证了推荐比例 `9:16` 等比缩放居中渲染（`clippedViewCount = 0`）。
+| 范围 | 已验证结果 |
+| --- | --- |
+| Keychain | B 站和独立 Catalyst 应用各通过 20 项。系统 Security 入口返回重复项 `-25299`，持久引用可回查和删除。迁移后的测试库通过 SQLite 检查，临时记录已清理。 |
+| 平台 | 独立应用测试了四种布局与原生平台开关的八种组合。主程序 `+load` 的身份观测与运行后相符，更早加载的依赖库不在此结论内。 |
+| Mach-O | QuickLook overlay 夹具修复后可启动，弱链接类型和随附库优先级得到保留。冷启动和热启动的指纹测试通过。B 站、高德地图和小红书共检查 25 个 Catalyst 宿主镜像及 18 个独立 iOS 扩展。 |
+| 几何 | B 站、高德地图、小红书和酷安在随航与主屏通过宽窄窗口、缩放和恢复测试。独立夹具验证第二窗口按钮命中。高德地图的可拖动底部面板在窄窗报告 11 个越界候选，与对照一致。 |
+| 权限和媒体 | 主屏全量探针通过 54 项。通知临时授权另外验证，测试通知已删除。常用音频类别、混音播放激活和状态恢复通过。Apple ID 交互登录与 GameKit 认证尚未实测。 |
+| 沙盒 | 工行签名规则的本机重放确认修复时区、UTF-8 和系统字体别名读取，无关系统文件仍受原规则限制。签名或完整性自检需单独定位。 |
+| 功耗 | UpTimer 相同主屏窗口尺寸的短时空闲采样为约 1.53 → 1.60 mW。该采样只覆盖进程短时空闲。 |
 
----
-
-## 六、后续增强（iPhone Duo、UI Scale、SDK Shift 与稳定性护栏）
-
-1. **iPhone Duo（折叠屏宽窗）布局与系统状态反映**
-   - 默认设备标识与布局选项新增 `iPhone Duo`（`iPhone19,4` / `layoutIdiom = 3`，与 iPhone / iPad / 自动并列）。
-   - `AppInfo.swift`、`AKPlugin.swift`、`PlayScreen.swift` 识别 `DTSDKName >= 27.1`（`supportsDuoAdaptive`）与 `UIRequiresFullScreenIgnoredStartingWithVersion`。
-   - 在 `iPhone Duo` 展开横屏宽窗下通过 `UIWindow.safeAreaInsets`、`UIWindowScene.interfaceOrientation`、`UIApplication.statusBarOrientation`、`UIWindowSceneGeometry.interfaceOrientation` 与 `_UIScreenFixedCoordinateSpace.bounds` 动态反映折叠/展开与独占模拟内屏占比（实测高德地图 `17.03.1` 首页与路线规划页在 `1050×780` 宽窗下正确激活左栏右图分栏，哔哩哔哩 `9.20.0` `1100×820` 4 列 ↔ `420×770` 2 列自由重排）。
-2. **Catalyst 界面缩放比例（`uiScale` / `iOSMacScaleFactor`）**
-   - 在单应用图形设置中支持 `100%`（默认 1:1）、`77%`（macOS Catalyst 原版默认）、`115%`、`125%`、`150%`、`200%` 切换。
-3. **SDK Shift（强制解锁自由自适应缩放）单应用开关 + 模式 6 修复**
-   - 参考 `SDKShift-for-Duo` 思路，新增单应用开关 `sdkShift`：开启后在宿主与 `PlayTools` 中解除全屏与单向比例锁定，并在内存中为 `[NSBundle mainBundle]` 声明 `DTSDKName = iphoneos27.2` 与 `UIRequiresFullScreen = NO`（实测百度网盘 `13.37.5` 从 `9:16` 锁定解锁至 `900×760` 内容重排）。
-   - 修复模式 `6`（`Resizable`）下 `AKPlugin.aspectRatioSetting` 未优先判断 `resizableAspectRatioType == 0` 导致残留宽高仍锁死窗口比例的问题。
-4. **运行时兼容性与稳定性护栏**
-   - `Toucher.swift` 增加空 `keyWindow` 判空保护；`PlayedApple.swift` / `PlayedAppleDB.swift` 补齐默认 `kSecAttrAccessGroup` 与 `PRAGMA user_version` 建表检查。
-   - `PlayLoader.m` 增加 libc interpose 原函数快照防互调递归、`CloudKit` 缺失权限安全降级桩、`UINSUIKitTerminationController` 退出超时上限收敛与远程通知重复注册限流；`ProxyShield.m` 在签名前注入以向应用呈现 iOS 标准网络代理/网卡视图。
-
----
-
-## 七、低功耗「应用模式（App Mode）」默认策略与宿主功耗修复
-
-面向日常非游戏 iOS 应用（B 站、小红书、酷安等）与笔记本续航场景，将默认运行策略升级为低功耗 **App Mode**，同时保留一键切回 **Game Mode** 的能力（配套 `PlayTools` 侧同步停用空载 60–120Hz `CADisplayLink`、消除 `SwordRPC`/SwiftNIO 10 线程泄漏并优化热路径 Hook）：
-
-1. **共享配置默认收敛为低功耗 App Mode**
-   - [`PlayCover/Model/AppSettings.swift`](PlayCover/Model/AppSettings.swift)、[`PlayCover/Model/DiscordActivity.swift`](PlayCover/Model/DiscordActivity.swift)、[`PlayCover/Utils/LegacySettings.swift`](PlayCover/Utils/LegacySettings.swift)
-   - 与 `PlayTools` 对齐默认配置：`keymapping = false`、`discordActivity.enable = false`，新增单应用开关 `spoofPowerState = false`（仅在开启时伪装 100% 满电、正常温控与非低电量模式；关闭时遵循 macOS 低电量模式、系统温控与 App Nap）。
-   - 保留 `layoutIdiom = 3`、`iosDeviceModel = "iPhone19,4"`、`resolution = 7`、`uiScale = 1.0`、`playChain = true`、`rootWorkDir = true` 不变。
-2. **宿主 `PlayApp.runAppExec()` 1 Hz 轮询与无条件防息屏缺陷修复**
-   - [`PlayCover/Model/PlayApp.swift`](PlayCover/Model/PlayApp.swift)
-   - 修复此前忽略 `disableTimeout == false` 而无条件创建 `kIOPMAssertionTypeNoDisplaySleep` 阻止显示器休眠的 Bug（`disableTimeOut()` 增加 `guard settings.settings.disableTimeout`）。
-   - 移除 `while !runningApp.isTerminated { ... sleep(1) }` 1 Hz 阻塞轮询循环，改为事件驱动的 `NSWorkspace.shared.notificationCenter` 监听（`didActivateApplicationNotification` / `didDeactivateApplicationNotification` / `didTerminateApplicationNotification`）：默认关闭防息屏且未启用 KeyCover 时零监听、零唤醒、零电源断言，应用退出与对象销毁时自动清理。
-3. **设置页「运行模式」一键预设与电池/温控伪装开关**
-   - [`PlayCover/Views/AppSettingsView.swift`](PlayCover/Views/AppSettingsView.swift)、[`PlayCover/en.lproj/Localizable.strings`](PlayCover/en.lproj/Localizable.strings)、[`PlayCover/zh-Hans.lproj/Localizable.strings`](PlayCover/zh-Hans.lproj/Localizable.strings)
-   - 在 `MiscView` 顶部新增「运行模式（Usage Mode）」一键切换按钮：**低功耗应用模式**（关闭 `keymapping`、`discordActivity.enable`、`spoofPowerState`、`disableTimeout`）与 **游戏模式**（开启 `keymapping`、`spoofPowerState`）。
-   - 新增独立开关「伪装满电与无温控（游戏模式）」（`spoofPowerState`）及说明提示，并清理 `KeymappingView`/`MiscView` 中未使用的 `@AppStorage` 冗余声明。
-
----
-
-## 八、加固 App 消桩匹配器纠正、扫描缓存与命名修正（2026-11-22）
-
-1. **消桩匹配器纠正（`PlayCover/Utils/Macho.swift`）**
-   - 上一版新增的「反向顺序」分支把首指令写成了 `strictStackPointerSource(base[index])`，两条条件都在匹配 `mov sp, Xn`，从未真正检查 `mov x30, Xn`；多出的 1 处命中属于 `mov sp` 邻近的误判。
-   - 真实的反向形态是 `mov x29, Xn → mov x30, Xn → mov sp, Xn → br x16`（例：`ChinaMobile+0x1000094d8`）。在未改写的原始二进制上实测该形态命中 **3,337 处（中国移动 12.5.7）/ 4,755 处（工商银行）**——同一形态也被混淆器当作填充/诱饵大量插入，无法与真实 fail block 区分。
-   - 结论：**不再自动改写该顺序**，只保留已验证有效的 `mov sp, Xn → mov x30, Xn → br Xm` 路径，避免在未知上下文中把成千上万条 `mov sp` 改成 `nop`。区分诱饵与真实桩需要阶段 0 的运行期证据。
-   - `trapSchemaVersion` 提升到 `3`，使旧扫描缓存失效。
-   - **复测**：中国移动 12.5.7 重装命中 37 处，`0x7445974` 落盘为 `1f2003d5`（nop）；三款 App 冷启动 16 秒均无 `EXC_BAD_ACCESS`（工行改为自身 `exit(0)`，见下）。
-
-2. **冷启动扫描缓存（`PlayCover/Model/PlayApp.swift`、`Model/AppSettings.swift`）**
-   - `repairMachOsIfNeeded()` 不再每次冷启动读全量 Mach-O：按「主程序/Frameworks 的 path + size + mtime」生成指纹，连同 `trapSchemaVersion` 存入该 App 的设置 plist（`machoTrapSchemaVersion` / `machoScanFingerprint`）。
-   - 指纹一致且版本一致时跳过消桩扫描；发生 Mach-O 转换的切片强制重扫；转换/签名后再计算指纹，避免下次启动失配。
-   - 加密检测与架构校验保留，不受缓存影响。
-
-3. **命名修正（`PlayCover/Utils/PlayTools.swift`、`Model/PlayApp.swift`）**
-   - `installProxyShield(for:)` 实际行为是**移除**旧的 `ProxyShield.dylib` 注入项，更名为 `removeLegacyProxyShield(for:)`，调用点同步更新。
-
-4. **Catalyst 构建链修复**
-   - `PlayTools/Controls/PTFakeTouch/NSObject+Swizzle.m`：`hook_setCurrentSubscription:` 的参数由 `VSSubscription *` 改为 `id`。该类型在 Mac Catalyst 不存在，导致整个 Catalyst 目标编译失败；改为运行时按类名 swizzle 后，Catalyst 与 iOS 共用同一份代码。
-   - Catalyst 目标的正确构建方式（`-target` 不会带入 `EFFECTIVE_PLATFORM_NAME`）：
-     ```bash
-     xcodebuild -project PlayTools/PlayTools.xcodeproj -scheme PlayTools -configuration Release \
-       -destination 'platform=macOS,variant=Mac Catalyst' \
-       SYMROOT=$PWD/build/PlayToolsCatalyst OBJROOT=$PWD/build/PlayToolsCatalyst \
-       CODE_SIGN_IDENTITY="-" CODE_SIGNING_ALLOWED=NO build
-     ```
-   - `PlayTools.xcframework` 需同时包含 `ios-arm64` 与 `ios-arm64-maccatalyst` 两个切片；仅 iOS 切片会导致 `incompatible platform (have 'iOS', need 'macCatalyst')`。
-   - `AKInterface.bundle` 必须是 macOS 布局（仅 `Contents/`）；根目录残留 `Info.plist` 会让 `codesign --deep` 报 `unsealed contents present in the bundle root`，进而使 PlayCover 的 Sparkle 签名阶段整体失败。
-
----
-
-## 九、统一构建链：双切片 xcframework 与 AKInterface 布局（2026-11-22）
-
-`./sync_upstream.sh build` 现在是唯一入口，不再依赖手工命令：
-
-1. `PlayTools`（`-sdk iphoneos`）与 `AKInterface`（`-sdk macosx`）分别构建。
-2. `PlayTools` 追加 Mac Catalyst 切片，必须走 `-scheme` + `-destination 'platform=macOS,variant=Mac Catalyst'`（`-target` 不会带 `EFFECTIVE_PLATFORM_NAME=-maccatalyst`）。
-3. `install_ak_bundle()` 把 macOS 布局的 `AKInterface.bundle` 写进两个切片的 `PlugIns/`，并删除根目录遗留的 `Info.plist`——否则 `codesign --deep` 报 `unsealed contents present in the bundle root`，PlayCover 的 Sparkle 签名阶段会整段失败。
-4. `xcodebuild -create-xcframework` 在本机偶尔只写 `Info.plist` 不落切片，`ensure_xcframework_slice()` 会补拷 `ios-arm64` 与 `ios-arm64-maccatalyst`。
-5. 构建后删除旧的 `PlayCover.app` 再重编，避免 Xcode 复用上一次的产品。
-
-**注意**：拷贝阶段的输入已改为 `PlayTools.xcframework/ios-arm64-maccatalyst/...`，不再做 `vtool -set-build-version` 平台改写；宿主 `PlayCover` 本身不链接 `PlayTools`（`otool -L` 无该依赖），因此不存在平台不匹配链接问题。真机 IPA 导出改用随 App `Resources/` 携带的 `PlayTools-iOS.framework`。
-
----
-
-## 十一、安装器加固与工行自毁结论（2026-11-22）
-
-1. **框架原子替换加固（`PlayCover/Utils/PlayTools.swift`）**
-   - staging 使用 `PlayTools.framework.staging-<UUID>`，并发安装互不干扰；`codesign -v` 失败即抛错，旧框架保持可用；目标为失效符号链接时先移除再 `moveItem`；移除 `installInIPA` 未使用的 `export` 参数。
-   - 三处原生 Catalyst `PlayTools`（Carthage / App 内嵌 / `~/Library/Frameworks`）UUID 一致（本轮 `C1FBF850-D97B-3F64-9B37-0A575D42CB9A`）。
-2. **工行 `0xb5a96000` 崩溃定位结论（只读核查，未改代码）**
-   - 崩溃由 `ICBCBankTest+0x25f5c4` 处的自毁桩触发：该函数先做调用计数/取模门控，再对输入做 32 位滚动异或校验（`eor` 链），把结果与硬编码 `0x166ea526` 比较，不等即跳 `0xb5a96000`。
-   - 这是银行自身的重签/完整性自检（硬编码期望值 + 内联自毁），不是 macOS 通用 API 或沙盒路径差异；按约定记录实证后止损，不做单 App 特判，也不放宽 `Macho.swift` 的 4,755 处反向桩匹配。
-
-## iOS 语义契约排查
-
-- Phase 3 从 Mach-O 实际依赖与 dyld shared cache 判定 Swift overlay，优先保留应用随附的库。转换覆盖宿主直接加载的 Framework 和 dylib。由系统独立加载的 `.appex` 保留 iOS 平台，原生组件 `.bundle` 保留各自目标。写入前验证 load command 空间。
-- Catalyst 测试二进制复现缺少 QuickLook Swift overlay，补充 `LC_RPATH` 和改写绝对安装名均能启动。采用绝对安装名后，重复扫描不再改文件。独立测试验证冷缓存、热缓存、嵌套 Framework 增加和路径移动。B 站、高德地图、小红书的 25 个宿主 Mach-O 均为 arm64 Catalyst，18 个 arm64 系统扩展保留 iOS，未发现悬空 Swift `@rpath`。独立测试同时确认 dyld 会将绝对的 `/usr/lib/swift/libswiftUIKit.dylib` 重定位到 iOSSupport。
-- Phase 6 为 `bypass` 沙盒配置补齐系统 locale 的读取及系统字体、时区别名的必要元数据读取。使用已安装应用的签名规则重放，修复前系统时区退回 UTC、POSIX locale 退回 US-ASCII 且无法读字体别名。候选规则恢复当前时区、UTF-8 和系统字体别名，重放也验证了无关系统文件仍受原本的读限制。
-- 探针构建与常规 Release 均通过 `./sync_upstream.sh build`。最终 Release 包通过递归签名检查，含更新后的 `default.yaml`。运行时自检、主屏和随航回归详见 [PlayTools 的会话记录](https://github.com/Rengwang/PlayTools/blob/master/SESSION_MODIFICATIONS.md)。
+详细报告保存在本机诊断目录。发布或表述某个应用已兼容时，应以对应版本和具体场景的复测为准。
