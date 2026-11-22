@@ -73,7 +73,7 @@ class PlayTools {
 
         // Stage first, verify, then swap atomically. Removing the live framework before the copy
         // would leave every installed app without PlayTools if the copy fails halfway.
-        let staging = frameworksURL.appendingPathComponent("PlayTools.framework.staging")
+        let staging = frameworksURL.appendingPathComponent("PlayTools.framework.staging-\(UUID().uuidString)")
         if FileManager.default.fileExists(atPath: staging.path) {
             try FileManager.default.removeItem(at: staging)
         }
@@ -86,11 +86,15 @@ class PlayTools {
                 NSLocalizedDescriptionKey: "Bundled PlayTools is not a Mac Catalyst binary"
             ])
         }
-        _ = try? Shell.run("/usr/bin/codesign", "-v", staging.path)
+        try Shell.run("/usr/bin/codesign", "-v", staging.path)
 
         if FileManager.default.fileExists(atPath: playToolsFramework.path) {
             _ = try FileManager.default.replaceItemAt(playToolsFramework, withItemAt: staging)
         } else {
+            // `fileExists` is false for a dangling symlink; remove it before moving in.
+            if (try? FileManager.default.destinationOfSymbolicLink(atPath: playToolsFramework.path)) != nil {
+                try FileManager.default.removeItem(at: playToolsFramework)
+            }
             try FileManager.default.moveItem(at: staging, to: playToolsFramework)
         }
     }
@@ -107,11 +111,11 @@ class PlayTools {
         return executable
     }
 
-    static func installInIPA(_ exec: URL, export: Bool = false) async throws {
+    static func installInIPA(_ exec: URL) async throws {
         var binary = try Data(contentsOf: exec)
         try Macho.stripBinary(&binary)
 
-        let injectPath = export ? try iosInjectPath() : playToolsPath
+        let injectPath = playToolsPath
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             Inject.injectMachO(machoPath: exec.path,
                                cmdType: .loadDylib,
