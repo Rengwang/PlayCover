@@ -180,7 +180,7 @@
 4. `xcodebuild -create-xcframework` 在本机偶尔只写 `Info.plist` 不落切片，`ensure_xcframework_slice()` 会补拷 `ios-arm64` 与 `ios-arm64-maccatalyst`。
 5. 构建后删除旧的 `PlayCover.app` 再重编，避免 Xcode 复用上一次的产品。
 
-**注意**：`PlayCover.xcodeproj` 的 `FRAMEWORK_SEARCH_PATHS` 仍指向 `PlayTools.xcframework/ios-arm64/...`。这是刻意保留的：宿主是 macOS App，直接链接 `maccatalyst` 切片会因平台不匹配链接失败，现有做法是在拷贝后由 `vtool -set-build-version maccatalyst` 改写平台。若改为链接 catalyst 切片，需要先验证链接器行为。
+**注意**：拷贝阶段的输入已改为 `PlayTools.xcframework/ios-arm64-maccatalyst/...`，不再做 `vtool -set-build-version` 平台改写；宿主 `PlayCover` 本身不链接 `PlayTools`（`otool -L` 无该依赖），因此不存在平台不匹配链接问题。真机 IPA 导出改用随 App `Resources/` 携带的 `PlayTools-iOS.framework`。
 
 ---
 
