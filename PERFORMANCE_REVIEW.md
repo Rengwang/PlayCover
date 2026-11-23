@@ -115,3 +115,5 @@ macOS 会根据前台状态、窗口可见性、音频和电源断言等条件�
 本轮隔离应用、重复源码快照、311 MiB 的二进制检查副本及空覆盖率文件已清理；50 份原始功耗 plist 和 Metal trace 已压缩保留。本机诊断目录约 71 MiB，另保留约 37 MiB 的已验证回滚备份。`/Applications` 下 10 个旧的 PlayCover 备份已移至废纸篓，可恢复。此前已打开的用户应用及无关窗口未被移动或退出。
 
 复测入口和结果含义见 [Tools/Performance/README.md](Tools/Performance/README.md)。原始本机报告保留在工作区 `build/diagnostics/performance-20261123/`；其中含本机路径和进程信息，不随 GitHub 分支发布。
+
+用于此次构建的工作区脚本已保存至 [Tools/Workspace](Tools/Workspace/README.md)，支持从同级 Fork 源码重建，补充了仓库内目录定位。脚本主体与本轮构建入口一致，语法、帮助入口及实际双仓库 `check` 已验证。

@@ -11,6 +11,8 @@
 
 从同时包含 `PlayCover/`、`PlayTools/` 和 `sync_upstream.sh` 的工作区根目录执行。
 
+重新克隆时可使用已纳入 Git 的[双仓库构建入口](Tools/Workspace/README.md)，直接执行 `./PlayCover/Tools/Workspace/sync_upstream.sh build`。
+
 ```sh
 ./sync_upstream.sh build
 ```
