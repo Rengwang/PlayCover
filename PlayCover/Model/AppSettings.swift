@@ -56,6 +56,7 @@ struct AppSettingsData: Codable {
     var layoutIdiom: Int = 3
     var sdkShift = false
     var useNativePlatform = false
+    var cameraRotation = -1
     var spoofPowerState = false
     /// Cached result of the anti-tamper scan: matcher version + per-binary fingerprint.
     var machoTrapSchemaVersion = 0
@@ -108,6 +109,7 @@ struct AppSettingsData: Codable {
         layoutIdiom = try container.decodeIfPresent(Int.self, forKey: .layoutIdiom) ?? 3
         sdkShift = try container.decodeIfPresent(Bool.self, forKey: .sdkShift) ?? false
         useNativePlatform = try container.decodeIfPresent(Bool.self, forKey: .useNativePlatform) ?? false
+        cameraRotation = try container.decodeIfPresent(Int.self, forKey: .cameraRotation) ?? -1
         spoofPowerState = try container.decodeIfPresent(Bool.self, forKey: .spoofPowerState) ?? false
         machoTrapSchemaVersion = try container.decodeIfPresent(Int.self,
                                                                forKey: .machoTrapSchemaVersion) ?? 0

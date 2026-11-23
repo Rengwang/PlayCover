@@ -14,10 +14,10 @@ public class IPA {
         self.url = url
     }
 
-    public func allocateTempDir() throws {
+    public func allocateTempDir(near destination: URL? = nil) throws {
         tmpDir = try FileManager.default.url(for: .itemReplacementDirectory,
                                              in: .userDomainMask,
-                                             appropriateFor: FileManager.default.temporaryDirectory,
+                                             appropriateFor: destination ?? FileManager.default.temporaryDirectory,
                                              create: true)
     }
 

@@ -8,6 +8,9 @@ enum PlayCoverError: Error {
     case waitDownload
     case appEncrypted
     case appCorrupted
+    case marketplaceKitUnavailable
+    case hostDependencyUnavailable(path: String, image: String)
+    case appRunningDuringInstall
     case appProhibited
     case appMaliciousProhibited
     case failedToStripBinary
@@ -27,6 +30,12 @@ extension PlayCoverError: LocalizedError {
             return NSLocalizedString("error.appEncrypted", comment: "")
         case .appCorrupted:
             return NSLocalizedString("error.appCorrupted", comment: "")
+        case .marketplaceKitUnavailable:
+            return NSLocalizedString("error.marketplaceKitUnavailable", comment: "")
+        case let .hostDependencyUnavailable(path, image):
+            return String(format: NSLocalizedString("error.hostDependencyUnavailable", comment: ""), image, path)
+        case .appRunningDuringInstall:
+            return NSLocalizedString("error.appRunningDuringInstall", comment: "")
         case .appProhibited:
             return NSLocalizedString("error.appProhibited", comment: "")
         case .appMaliciousProhibited:

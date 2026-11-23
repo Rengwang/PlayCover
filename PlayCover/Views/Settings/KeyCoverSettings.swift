@@ -47,10 +47,19 @@ struct KeyCoverSettings: View {
                 Spacer()
                 Button(keyCoverObserved.keyCoverEnabled ? "button.Reset" : "button.Enable") {
                     if keyCoverObserved.keyCoverEnabled {
-                        if modifierKeyObserver.isOptionKeyPressed {
-                            KeyCoverPassword.shared.forceResetKeyCoverPassword()
-                        } else {
-                            keyCoverRemovalViewShown = true
+                        let forceReset = modifierKeyObserver.isOptionKeyPressed
+                        Task { @MainActor in
+                            let managedPasswordMissing = await KeyCover.prepareManagedPassword(retry: true)
+                            guard KeyCover.shared.isKeyCoverEnabled() else { return }
+                            if forceReset {
+                                // A denied or cancelled keychain read does not mean the key is lost.
+                                if KeyCoverPreferences.shared.keyCoverEnabled != .selfGeneratedPassword
+                                    || managedPasswordMissing {
+                                    KeyCoverPassword.shared.forceResetKeyCoverPassword()
+                                }
+                            } else {
+                                keyCoverRemovalViewShown = true
+                            }
                         }
                     } else {
                         keyCoverInitialSetupShown = true
@@ -70,6 +79,13 @@ struct KeyCoverSettings: View {
                                 "\(keyCoverObserved.keychains.count)"))
                 }
                 Spacer()
+                if keyCoverPreferences.keyCoverEnabled == .selfGeneratedPassword && !keyCoverObserved.managedPasswordReady {
+                    Button("keycover.button.authorize") {
+                        Task { @MainActor in
+                            await KeyCover.prepareManagedPassword(retry: true)
+                        }
+                    }
+                }
                 Button("keycover.button.lockAll") {
                     KeyCover.shared.lockAllChainsAsync()
                 }
@@ -79,7 +95,12 @@ struct KeyCoverSettings: View {
             HStack {
                 Spacer()
                 Button("keycover.button.changePassword") {
-                    keyCoverUpdatePasswordShown = true
+                    Task { @MainActor in
+                        await KeyCover.prepareManagedPassword(retry: true)
+                        if KeyCover.shared.isKeyCoverEnabled() {
+                            keyCoverUpdatePasswordShown = true
+                        }
+                    }
                 }
                 .disabled(!keyCoverObserved.keyCoverEnabled)
                 Spacer()

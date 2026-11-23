@@ -74,7 +74,8 @@ class Entitlements {
 
         if SystemConfig.isPlaySignActive {
             base["com.apple.private.tcc.allow"] = TCC.split(whereSeparator: \.isNewline)
-            if let specific = try [String: Any].read(app.entitlements) {
+            if let specific = try [String: Any].read(app.bundledOriginalEntitlements)
+                ?? [String: Any].read(app.entitlements) {
                 for key in specific.keys {
                     base[key] = specific[key]
                 }

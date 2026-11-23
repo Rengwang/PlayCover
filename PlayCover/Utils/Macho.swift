@@ -6,48 +6,88 @@
 import Foundation
 
 class Macho {
-    static func stripBinary(_ binary: inout Data) throws {
-        guard binary.count >= MemoryLayout<fat_header>.size else {
-            throw PlayCoverError.appCorrupted
+    private struct FatTable {
+        static let headerSize = MemoryLayout<fat_header>.size
+        let count: Int
+        let uses64BitOffsets: Bool
+        let shouldSwap: Bool
+
+        var entrySize: Int {
+            uses64BitOffsets ? MemoryLayout<fat_arch_64>.size : MemoryLayout<fat_arch>.size
         }
-        var header = binary.extract(fat_header.self)
-        var offset = MemoryLayout.size(ofValue: header)
-        let shouldSwap = header.magic == FAT_CIGAM
 
-        if header.magic == FAT_MAGIC || header.magic == FAT_CIGAM {
-            // Make sure the endianness is correct
-            if shouldSwap {
-                swap_fat_header(&header, NXHostByteOrder())
-            }
+        var byteCount: Int { count * entrySize }
 
-            let archSize = MemoryLayout<fat_arch>.size
-            guard header.nfat_arch > 0, Int(header.nfat_arch) <= (binary.count - offset) / archSize else {
+        init?(headerData: Data, fileSize: UInt64) throws {
+            guard headerData.count >= Self.headerSize else { throw PlayCoverError.appCorrupted }
+            var header = headerData.extract(fat_header.self)
+            let magic = header.magic
+            uses64BitOffsets = magic == FAT_MAGIC_64 || magic == FAT_CIGAM_64
+            guard uses64BitOffsets || magic == FAT_MAGIC || magic == FAT_CIGAM else { return nil }
+            shouldSwap = magic == FAT_CIGAM || magic == FAT_CIGAM_64
+            if shouldSwap { swap_fat_header(&header, NXHostByteOrder()) }
+            count = Int(header.nfat_arch)
+            guard fileSize >= UInt64(Self.headerSize), count > 0,
+                  UInt64(count) <= (fileSize - UInt64(Self.headerSize)) / UInt64(entrySize) else {
                 throw PlayCoverError.appCorrupted
             }
-            for _ in 0..<header.nfat_arch {
-                var arch = binary.extract(fat_arch.self, offset: offset)
-                if shouldSwap {
-                    swap_fat_arch(&arch, 1, NXHostByteOrder())
+        }
+
+        func arm64Range(in table: Data, fileSize: UInt64) throws -> Range<UInt64> {
+            guard table.count == byteCount else { throw PlayCoverError.appCorrupted }
+            let firstPossibleOffset = UInt64(Self.headerSize + byteCount)
+            var fallback: Range<UInt64>?
+            for index in 0..<count {
+                let entry = architecture(in: table, offset: index * entrySize)
+                guard entry.cpu == CPU_TYPE_ARM64 else { continue }
+                guard entry.offset >= firstPossibleOffset, entry.offset <= fileSize,
+                      entry.size >= UInt64(MemoryLayout<mach_header_64>.size),
+                      entry.size <= fileSize - entry.offset else {
+                    throw PlayCoverError.appCorrupted
                 }
-
-                if arch.cputype == CPU_TYPE_ARM64 {
-                    let start = Int(arch.offset)
-                    let size = Int(arch.size)
-                    guard start >= MemoryLayout<fat_header>.size + Int(header.nfat_arch) * archSize,
-                          start <= binary.count, size <= binary.count - start else {
-                        throw PlayCoverError.appCorrupted
-                    }
-                    print("Found ARM64 arch in fat binary")
-                    binary = binary.subdata(in: start..<(start + size))
-
-                    return
-                }
-
-                offset += Int(MemoryLayout.size(ofValue: arch))
+                let range = entry.offset..<(entry.offset + entry.size)
+                let subtype = UInt32(bitPattern: entry.subtype) & ~CPU_SUBTYPE_MASK
+                if subtype == UInt32(CPU_SUBTYPE_ARM64_ALL) { return range }
+                if fallback == nil { fallback = range }
             }
-
+            if let fallback { return fallback }
             throw PlayCoverError.failedToStripBinary
         }
+
+        private func architecture(in table: Data, offset: Int)
+            -> (cpu: cpu_type_t, subtype: cpu_subtype_t, offset: UInt64, size: UInt64) {
+            if uses64BitOffsets {
+                var entry = table.extract(fat_arch_64.self, offset: offset)
+                if shouldSwap { swap_fat_arch_64(&entry, 1, NXHostByteOrder()) }
+                return (entry.cputype, entry.cpusubtype, entry.offset, entry.size)
+            }
+            var entry = table.extract(fat_arch.self, offset: offset)
+            if shouldSwap { swap_fat_arch(&entry, 1, NXHostByteOrder()) }
+            return (entry.cputype, entry.cpusubtype, UInt64(entry.offset), UInt64(entry.size))
+        }
+    }
+
+    static func stripBinary(_ binary: inout Data) throws {
+        let fileSize = UInt64(binary.count)
+        guard let table = try FatTable(headerData: binary, fileSize: fileSize) else { return }
+        let start = FatTable.headerSize
+        let entries = binary.subdata(in: start..<(start + table.byteCount))
+        let range = try table.arm64Range(in: entries, fileSize: fileSize)
+        binary = binary.subdata(in: Int(range.lowerBound)..<Int(range.upperBound))
+    }
+
+    /// Reads only the FAT header and architecture table for callers inspecting load commands.
+    static func selectedArm64Slice(in handle: FileHandle) throws -> Range<UInt64> {
+        let fileSize = try handle.seekToEnd()
+        try handle.seek(toOffset: 0)
+        guard let header = try handle.read(upToCount: FatTable.headerSize) else {
+            throw PlayCoverError.appCorrupted
+        }
+        guard let table = try FatTable(headerData: header, fileSize: fileSize) else { return 0..<fileSize }
+        guard table.byteCount <= 1024 * 1024, let entries = try handle.read(upToCount: table.byteCount) else {
+            throw PlayCoverError.appCorrupted
+        }
+        return try table.arm64Range(in: entries, fileSize: fileSize)
     }
 
     static func convertMacho(_ macho: URL, in app: URL? = nil) throws {
@@ -61,7 +101,7 @@ class Macho {
             print("Replacing version command...")
             try replaceVersionCommand(&binary)
         }
-        _ = try resolveSwiftLibraries(&binary, at: macho, in: app)
+        _ = try resolveSystemLibraryAliases(&binary, at: macho, in: app)
         if try stripRestrictSegment(&binary) {
             print("Neutralized __RESTRICT segment in MachO")
         }
@@ -75,7 +115,7 @@ class Macho {
         try macho.setBinaryPosixPermissions(0o755)
     }
 
-    static let swiftLibrarySchemaVersion = 1
+    static let libraryRepairSchemaVersion = 2
 
     private static let iOSSupportSwiftDirectory = "/System/iOSSupport/usr/lib/swift"
     private static let macOSSwiftDirectory = "/usr/lib/swift"
@@ -103,21 +143,281 @@ class Macho {
             || path.withCString { sharedCacheContainsPath?($0) == true }
     }
 
-    private static func bundledLibraryExists(_ filename: String, at macho: URL, in app: URL?) -> Bool {
-        let directory = macho.deletingLastPathComponent()
-        var candidates = [directory.appendingPathComponent(filename)]
-        if let app = app {
-            candidates.append(app.appendingPathComponent("Frameworks").appendingPathComponent(filename))
+    static let marketplaceKitInstallName = "/System/Library/Frameworks/MarketplaceKit.framework/MarketplaceKit"
+    private static let catalystSystemRoot = "/System/iOSSupport"
+
+    static func launchRequiresUnavailableMarketplaceKit(_ executable: URL, in bundle: URL) -> Bool {
+        firstUnavailableHostLibrary(executable, in: bundle) { $0 == marketplaceKitInstallName } != nil
+    }
+
+    static func supportsMarketplaceKitCompatibility(_ executable: URL, in bundle: URL, stubBinary: URL) -> Bool {
+        guard sharedCacheContainsPath != nil,
+              FileManager.default.fileExists(atPath: stubBinary.path) else { return false }
+
+        var requiresMarketplaceKit = false
+        var marketplaceKitClients: [URL] = []
+        traverseStartupGraph(executable, in: bundle) { canonicalImage, links in
+            let referencesMarketplaceKit = (links.required + links.optional).contains {
+                normalizedSystemPath($0) == marketplaceKitInstallName
+            }
+            if referencesMarketplaceKit {
+                marketplaceKitClients.append(canonicalImage)
+            }
+            for dependency in links.required.reversed() {
+                let nativePath = normalizedSystemPath(dependency)
+                if nativePath == marketplaceKitInstallName, isMissingHostLibrary(nativePath) {
+                    requiresMarketplaceKit = true
+                }
+            }
+            return true
         }
-        return candidates.contains {
-            $0.standardizedFileURL != macho.standardizedFileURL && FileManager.default.fileExists(atPath: $0.path)
+
+        guard requiresMarketplaceKit, !marketplaceKitClients.isEmpty,
+              let exportedSymbols = exportedSymbols(at: stubBinary) else {
+            return false
+        }
+
+        var importedSymbols: Set<String> = []
+        for client in marketplaceKitClients {
+            guard let symbols = importedSymbolsFromLibrary("MarketplaceKit", at: client) else {
+                return false
+            }
+            importedSymbols.formUnion(symbols)
+        }
+        return !importedSymbols.isEmpty && importedSymbols.isSubset(of: exportedSymbols)
+    }
+
+    /// Finds a missing absolute system install name in the mandatory startup graph.
+    /// Unknown run-path resolutions and optional images are left to dyld.
+    static func firstUnavailableHostLibrary(_ executable: URL, in bundle: URL,
+                                            matching: (String) -> Bool = { _ in true })
+        -> (path: String, image: String)? {
+        guard sharedCacheContainsPath != nil else { return nil }
+
+        let bundlePrefix = bundle.resolvingSymlinksInPath().standardizedFileURL.path + "/"
+        var checkedSystemPaths: Set<String> = []
+        var missingLibrary: (path: String, image: String)?
+        traverseStartupGraph(executable, in: bundle) { canonicalImage, links in
+            for dependency in links.required.reversed() {
+                guard dependency.hasPrefix("/System/") || dependency.hasPrefix("/usr/lib/") else { continue }
+                let nativePath = normalizedSystemPath(dependency)
+                if matching(nativePath), checkedSystemPaths.insert(nativePath).inserted,
+                   isMissingHostLibrary(nativePath) {
+                    missingLibrary = (nativePath, String(canonicalImage.path.dropFirst(bundlePrefix.count)))
+                    return false
+                }
+            }
+            return true
+        }
+        return missingLibrary
+    }
+
+    private static func normalizedSystemPath(_ path: String) -> String {
+        path.hasPrefix(catalystSystemRoot + "/")
+            ? String(path.dropFirst(catalystSystemRoot.count))
+            : path
+    }
+
+    private static func isMissingHostLibrary(_ nativePath: String) -> Bool {
+        !systemLibraryExists(nativePath) && !systemLibraryExists(catalystSystemRoot + nativePath)
+    }
+
+    private static func traverseStartupGraph(
+        _ executable: URL, in bundle: URL,
+        visitor: (URL, (required: [String], optional: [String], runPaths: [String])) -> Bool
+    ) {
+        let bundlePrefix = bundle.resolvingSymlinksInPath().standardizedFileURL.path + "/"
+        let executableDirectory = executable.deletingLastPathComponent().path
+        var pending: [(image: URL, inheritedRunPaths: [String])] = [(executable, [])]
+        var visited: Set<URL> = []
+        while let (image, inheritedRunPaths) = pending.popLast() {
+            let canonicalImage = image.resolvingSymlinksInPath().standardizedFileURL
+            guard canonicalImage.path.hasPrefix(bundlePrefix), visited.insert(canonicalImage).inserted,
+                  let links = try? startupLinks(at: image) else { continue }
+
+            guard visitor(canonicalImage, links) else { return }
+
+            let loaderDirectory = image.deletingLastPathComponent().path
+            func expand(_ path: String) -> String {
+                if path.hasPrefix("@executable_path/") {
+                    return executableDirectory + path.dropFirst("@executable_path".count)
+                }
+                if path.hasPrefix("@loader_path/") {
+                    return loaderDirectory + path.dropFirst("@loader_path".count)
+                }
+                return path
+            }
+            let runPaths = links.runPaths.map(expand) + inheritedRunPaths
+            for dependency in links.required.reversed() {
+                if dependency.hasPrefix("/System/") || dependency.hasPrefix("/usr/lib/") {
+                    continue
+                }
+                let candidates = dependency.hasPrefix("@rpath/")
+                    ? runPaths.map { $0 + dependency.dropFirst("@rpath".count) }
+                    : [expand(dependency)]
+                guard let path = candidates.first(where: { $0.hasPrefix("/") && systemLibraryExists($0) }) else {
+                    continue
+                }
+                pending.append((URL(fileURLWithPath: path), runPaths))
+            }
         }
     }
 
+    private static func exportedSymbols(at binary: URL) -> Set<String>? {
+        guard let output = try? Shell.run(print: false, "/usr/bin/dyld_info", "-arch", "arm64", "-exports",
+                                          binary.path) else {
+            return nil
+        }
+        var exports: Set<String> = []
+        var inExports = false
+        for rawLine in output.split(whereSeparator: \.isNewline) {
+            let line = rawLine.trimmingCharacters(in: .whitespaces)
+            if line == "-exports:" {
+                inExports = true
+                continue
+            }
+            guard inExports else { continue }
+            if line.hasPrefix("-") && line.hasSuffix(":") {
+                inExports = false
+                continue
+            }
+            let tokens = line.split(whereSeparator: \.isWhitespace).map(String.init)
+            if tokens.count >= 2, tokens[0].hasPrefix("0x") {
+                exports.insert(tokens[1])
+            }
+        }
+        return exports
+    }
+
+    private static func importedSymbolsFromLibrary(_ libraryName: String, at binary: URL) -> Set<String>? {
+        guard let output = try? Shell.run(print: false, "/usr/bin/dyld_info", "-arch", "arm64", "-imports",
+                                          binary.path) else {
+            return nil
+        }
+        let suffix = "(from \(libraryName))"
+        var imports: Set<String> = []
+        for rawLine in output.split(whereSeparator: \.isNewline) {
+            var line = rawLine.trimmingCharacters(in: .whitespaces)
+            guard line.hasSuffix(suffix) else { continue }
+            line = String(line.dropLast(suffix.count)).trimmingCharacters(in: .whitespaces)
+            if line.hasSuffix("[weak-import]") {
+                line = String(line.dropLast("[weak-import]".count)).trimmingCharacters(in: .whitespaces)
+            }
+            var tokens = line.split(whereSeparator: \.isWhitespace).map(String.init)
+            if tokens.count >= 2, tokens[0].hasPrefix("0x") {
+                tokens.removeFirst()
+            }
+            if tokens.count >= 3, tokens[tokens.count - 2] == "+" {
+                tokens.removeLast(2)
+            }
+            guard tokens.count == 1, !tokens[0].isEmpty else { return nil }
+            imports.insert(tokens[0])
+        }
+        return imports
+    }
+
+    private static func startupLinks(at image: URL) throws
+        -> (required: [String], optional: [String], runPaths: [String]) {
+        var binary = try Data(contentsOf: image, options: .mappedIfSafe)
+        try stripBinary(&binary)
+        return try startupLinks(in: binary)
+    }
+
+    private static func startupLinks(in binary: Data) throws
+        -> (required: [String], optional: [String], runPaths: [String]) {
+        var required: [String] = []
+        var optional: [String] = []
+        var runPaths: [String] = []
+        _ = try iterateLoadCommands(binary: binary) { offset, shouldSwap in
+            let command = binary.extract(load_command.self, offset: offset,
+                                         swap: shouldSwap ? swap_load_command : nil)
+            let isRunPath = command.cmd == UInt32(LC_RPATH)
+            let isWeak = command.cmd == UInt32(LC_LOAD_WEAK_DYLIB)
+            guard isRunPath || isWeak || command.cmd == UInt32(LC_LOAD_DYLIB)
+                    || command.cmd == UInt32(LC_REEXPORT_DYLIB)
+                    || command.cmd == UInt32(LC_LOAD_UPWARD_DYLIB) else { return false }
+            let minimumSize = isRunPath ? MemoryLayout<rpath_command>.size : MemoryLayout<dylib_command>.size
+            guard Int(command.cmdsize) >= minimumSize else { return false }
+            let raw = binary.extract(lc_str.self, offset: offset + MemoryLayout<load_command>.size).offset
+            let nameOffset = Int(shouldSwap ? raw.byteSwapped : raw)
+            guard nameOffset >= minimumSize, nameOffset < Int(command.cmdsize) else { return false }
+            let bytes = binary[(offset + nameOffset)..<(offset + Int(command.cmdsize))]
+            guard let terminator = bytes.firstIndex(of: 0),
+                  let name = String(bytes: bytes[..<terminator], encoding: .utf8) else { return false }
+            if isRunPath {
+                runPaths.append(name)
+            } else if isWeak {
+                optional.append(name)
+            } else {
+                required.append(name)
+            }
+            return false
+        }
+        return (required, optional, runPaths)
+    }
+
+    static func hasCustomLibrarySearch(_ environment: [String: String],
+                                       exceptFrameworkPath: String? = nil) -> Bool {
+        environment.contains { key, value in
+            !value.isEmpty && key.hasPrefix("DYLD_") && (key.hasSuffix("_PATH") || key == "DYLD_IMAGE_SUFFIX")
+                && !(key == "DYLD_FRAMEWORK_PATH" && value == exceptFrameworkPath)
+        }
+    }
+
+    private static func appLibrarySearchDirectories(at image: URL, in app: URL?, binary: Data) -> [URL]? {
+        let loaderDirectory = image.deletingLastPathComponent()
+        var directories = [loaderDirectory]
+        var executable = image
+        if let app = app {
+            directories.append(app.appendingPathComponent("Frameworks"))
+            if let metadata = try? [String: Any].read(app.appendingPathComponent("Info.plist")) {
+                if let environment = metadata["LSEnvironment"] as? [String: String],
+                   hasCustomLibrarySearch(environment) { return nil }
+                if let name = metadata["CFBundleExecutable"] as? String {
+                    executable = app.appendingPathComponent(name)
+                }
+            }
+        }
+        let executableDirectory = executable.deletingLastPathComponent().path
+        func expand(_ paths: [String], loader: String) -> [URL] {
+            paths.compactMap { path in
+                if path.hasPrefix("@executable_path/") || path == "@executable_path" {
+                    return URL(fileURLWithPath: executableDirectory + path.dropFirst("@executable_path".count))
+                }
+                if path.hasPrefix("@loader_path/") || path == "@loader_path" {
+                    return URL(fileURLWithPath: loader + path.dropFirst("@loader_path".count))
+                }
+                return path.hasPrefix("/") ? URL(fileURLWithPath: path) : nil
+            }
+        }
+        directories += expand((try? startupLinks(in: binary))?.runPaths ?? [], loader: loaderDirectory.path)
+        if executable.standardizedFileURL != image.standardizedFileURL {
+            directories += expand((try? startupLinks(at: executable))?.runPaths ?? [], loader: executableDirectory)
+        }
+        return directories
+    }
+
+    private static func hostedLibraryInstallName(for suffix: String) -> String? {
+        if !suffix.contains("/"), suffix.hasPrefix("libswift"), suffix.hasSuffix(".dylib") {
+            let ios = iOSSupportSwiftDirectory + "/" + suffix
+            let mac = macOSSwiftDirectory + "/" + suffix
+            if catalystFrameworkOverlays.contains(suffix), systemLibraryExists(ios) { return ios }
+            if systemLibraryExists(mac) { return mac }
+            return systemLibraryExists(ios) ? ios : nil
+        }
+        // Only use the system counterpart of a canonical public framework install name.
+        let parts = suffix.split(separator: "/", omittingEmptySubsequences: false)
+        guard parts.count == 2, !parts[1].isEmpty, parts[0] == parts[1] + ".framework" else { return nil }
+        let path = "/System/Library/Frameworks/" + suffix
+        let ios = catalystSystemRoot + path
+        if systemLibraryExists(ios) { return ios }
+        return systemLibraryExists(path) ? path : nil
+    }
+
     /// Carries the same repair forward to already-installed Catalyst images.
-    static func repairSwiftLibraries(in macho: URL, app: URL) throws -> Bool {
+    static func repairSystemLibraryAliases(in macho: URL, app: URL) throws -> Bool {
         var binary = try Data(contentsOf: macho, options: .mappedIfSafe)
-        guard try resolveSwiftLibraries(&binary, at: macho, in: app, copyBeforeWriting: true) else { return false }
+        guard try resolveSystemLibraryAliases(&binary, at: macho, in: app, copyBeforeWriting: true) else { return false }
         let permissions = try FileManager.default.attributesOfItem(atPath: macho.path)[.posixPermissions]
         try binary.write(to: macho, options: .atomic)
         if let permissions = permissions {
@@ -126,7 +426,7 @@ class Macho {
         return true
     }
 
-    private static func resolveSwiftLibraries(
+    private static func resolveSystemLibraryAliases(
         _ binary: inout Data, at macho: URL, in app: URL?, copyBeforeWriting: Bool = false
     ) throws -> Bool {
         let headerSize = MemoryLayout<mach_header_64>.size
@@ -135,6 +435,9 @@ class Macho {
         var changes: [(range: Range<Int>, bytes: Data)] = []
         var malformedCommand = false
         var reversedByteOrder = false
+        guard let searchDirectories = appLibrarySearchDirectories(at: macho, in: app, binary: binary) else {
+            return false
+        }
         let oldEnd = try iterateLoadCommands(binary: binary) { offset, shouldSwap in
             reversedByteOrder = shouldSwap
             let load = binary.extract(load_command.self, offset: offset, swap: shouldSwap ? swap_load_command : nil)
@@ -158,13 +461,18 @@ class Macho {
                 return true
             }
             guard path.hasPrefix(rpathPrefix) else { return false }
-            let filename = String(path.dropFirst(rpathPrefix.count))
-            guard filename.hasPrefix("libswift"), filename.hasSuffix(".dylib"), !filename.contains("/"),
-                  !bundledLibraryExists(filename, at: macho, in: app) else { return false }
-            let replacement = iOSSupportSwiftDirectory + "/" + filename
-            guard systemLibraryExists(replacement),
-                  catalystFrameworkOverlays.contains(filename)
-                    || !systemLibraryExists(macOSSwiftDirectory + "/" + filename) else { return false }
+            let suffix = String(path.dropFirst(rpathPrefix.count))
+            guard let replacement = hostedLibraryInstallName(for: suffix),
+                  !searchDirectories.contains(where: { directory in
+                      let candidate = directory.appendingPathComponent(suffix).standardizedFileURL
+                      if candidate == macho.standardizedFileURL { return false }
+                      // Preserve custom and bundled libraries, but retain Catalyst's overlay preference
+                      // when a run path selects the corresponding macOS Swift library.
+                      if catalystFrameworkOverlays.contains(suffix),
+                         candidate.path == macOSSwiftDirectory + "/" + suffix,
+                         replacement.hasPrefix(iOSSupportSwiftDirectory + "/") { return false }
+                      return systemLibraryExists(candidate.path)
+                  }) else { return false }
 
             let nameBytes = Data(replacement.utf8)
             let padding = 8 - (nameBytes.count % 8)
@@ -195,24 +503,43 @@ class Macho {
             // A Data read with .mappedIfSafe can be backed by a read-only mapping.
             binary = binary.withUnsafeBytes { Data($0) }
         }
-        try writeLoadCommands(&binary, commands: commands, start: headerSize, oldEnd: oldEnd,
-                              shouldSwap: reversedByteOrder)
+        do {
+            try writeLoadCommands(&binary, commands: commands, start: headerSize, oldEnd: oldEnd,
+                                  shouldSwap: reversedByteOrder)
+        } catch is InsufficientLoadCommandSpace {
+            // The original link paths can still be resolved by dyld. Keep this repair best-effort.
+            return false
+        }
         return true
     }
+
+    // iOS and Mac Catalyst share SDK version numbers for the modern UIKit
+    // compatibility modes. Preserve those SDKs when converting from iOS.
+    private static let modernUIKitSDK: UInt32 = 26 << 16
+    private static let legacyCatalystSDK: UInt32 = 14 << 16
+    private static let catalystDeploymentTarget: UInt32 = 11 << 16
 
     static func replaceVersionCommand(_ binary: inout Data) throws {
 
         var macCatalystCommand = build_version_command(cmd: UInt32(LC_BUILD_VERSION),
                                                        cmdsize: 24,
                                                        platform: UInt32(PLATFORM_MACCATALYST),
-                                                       minos: 0x000b0000,
-                                                       sdk: 0x000e0000,
+                                                       minos: catalystDeploymentTarget,
+                                                       sdk: legacyCatalystSDK,
                                                        ntools: 0)
 
         try replaceLastCommand(&binary, satisfy: {data, shouldSwap in
             let loadCommand = data.extract(load_command.self,
                                            offset: data.startIndex,
                                            swap: shouldSwap ? swap_load_command:nil)
+            if loadCommand.cmd == UInt32(LC_BUILD_VERSION),
+               data.count >= MemoryLayout<build_version_command>.size {
+                let original = data.extract(build_version_command.self, offset: data.startIndex,
+                                            swap: shouldSwap ? swap_build_version_command : nil)
+                if original.platform == PLATFORM_IOS && original.sdk >= modernUIKitSDK {
+                    macCatalystCommand.sdk = original.sdk
+                }
+            }
             return [UInt32(LC_VERSION_MIN_IPHONEOS),
                     UInt32(LC_VERSION_MIN_MACOSX),
                     UInt32(LC_BUILD_VERSION)]
@@ -224,6 +551,43 @@ class Macho {
             }
             return Data(bytes: &macCatalystCommand, count: MemoryLayout<build_version_command>.size)
         }, atEnd: true)
+    }
+
+    static func restoreApplicationSDK(at executable: URL, sdkName: String?) throws -> Bool {
+        // The app's Info.plist describes its executable. Embedded frameworks
+        // may have been built with different SDKs and need their own metadata.
+        let prefix = "iphoneos"
+        guard let sdkName, sdkName.hasPrefix(prefix) else { return false }
+        let version = sdkName.dropFirst(prefix.count).split(separator: ".", omittingEmptySubsequences: false)
+        guard (2...3).contains(version.count), let major = UInt16(version[0]),
+              let minor = UInt8(version[1]), let patch = version.count == 3 ? UInt8(version[2]) : 0 else { return false }
+        let sdk = UInt32(major) << 16 | UInt32(minor) << 8 | UInt32(patch)
+        guard sdk >= modernUIKitSDK else { return false }
+
+        var binary = try Data(contentsOf: executable)
+        var replacement: (offset: Int, bytes: Data)?
+        _ = try iterateLoadCommands(binary: binary) { offset, shouldSwap in
+            let load = binary.extract(load_command.self, offset: offset, swap: shouldSwap ? swap_load_command : nil)
+            let size = MemoryLayout<build_version_command>.size
+            guard load.cmd == UInt32(LC_BUILD_VERSION), load.cmdsize == size else { return false }
+            var command = binary.extract(build_version_command.self, offset: offset,
+                                         swap: shouldSwap ? swap_build_version_command : nil)
+            guard command.platform == PLATFORM_MACCATALYST, command.minos == catalystDeploymentTarget,
+                  command.sdk == legacyCatalystSDK, command.ntools == 0 else { return false }
+            command.sdk = sdk
+            if shouldSwap { swap_build_version_command(&command, NX_BigEndian) }
+            replacement = (offset, Data(bytes: &command, count: size))
+            return true
+        }
+        guard let replacement else { return false }
+        binary.replaceSubrange(replacement.offset..<(replacement.offset + replacement.bytes.count),
+                               with: replacement.bytes)
+        let permissions = try FileManager.default.attributesOfItem(atPath: executable.path)[.posixPermissions]
+        try binary.write(to: executable, options: .atomic)
+        if let permissions {
+            try FileManager.default.setAttributes([.posixPermissions: permissions], ofItemAtPath: executable.path)
+        }
+        return true
     }
 
     static func replaceLastCommand(_ binary: inout Data,
@@ -556,12 +920,17 @@ extension Macho {
 // words: any `mov sp, Xn` followed within a few instructions by `mov x30, Xn`
 // (same register) and then an indirect branch is a self-destruct trampoline.
 //
-// All three instructions are replaced with `nop`, so the block simply falls
-// through and returns through the `ret` padding those stubs are built with.
+// Also covers the consecutive reversed-order variant generated by the same
+// obfuscator family (`sub/mov x29` -> `sub/mov x30` -> `mov sp, Xn` -> `br Xm`),
+// where all four instructions are replaced with `nop`.
+//
+// Forward-order scans never cross basic-block control-flow boundaries (`ret`,
+// `b`, `br`, `bl`, `blr`, `cbz/cbnz`, `tbz/tbnz`, `b.cond`, `brk/hlt/udf`),
+// preventing false matches across adjacent functions or blocks.
 // Nothing else in the app is touched, and the patch is idempotent.
 extension Macho {
     /// Bumped whenever the matcher changes, so cached scan results are invalidated.
-    static let trapSchemaVersion = 3
+    static let trapSchemaVersion = 4
 
     private static let instrNop: UInt32 = 0xD503_201F
     private static let poisonPairWindow = 8   // mov sp -> mov x30
@@ -675,6 +1044,9 @@ extension Macho {
             var index = start / 4
             while index < last {
                 guard let trap = locateTrap(base, at: index, last: last) else { index += 1; continue }
+                if let fp = trap.fp {
+                    base[fp] = instrNop
+                }
                 base[trap.sp] = instrNop
                 base[trap.lr] = instrNop
                 base[trap.branch] = instrNop
@@ -685,27 +1057,34 @@ extension Macho {
         return patched
     }
 
+    private struct TrapSite {
+        let fp: Int?
+        let sp: Int
+        let lr: Int
+        let branch: Int
+    }
+
     /// Locates a self-destruct trampoline starting at `index`.
     ///
-    /// Only the `mov sp, Xn -> mov x30, Xn -> br Xm` order is rewritten in place.
-    ///
-    /// The reversed order (`mov x30, Xn` first, usually preceded by `mov x29, Xn`,
-    /// i.e. `mov x29/x30/sp, Xa -> br x16`) also exists — for example at
-    /// `ChinaMobile+0x1000094d8` — but it **must not** be patched automatically:
-    /// measured on the untouched binaries it matches 3,337 sites in ChinaMobile
-    /// 12.5.7 and 4,755 in ICBC, because the same 4-instruction shape is also used
-    /// as obfuscator decoy/filler. Rewriting thousands of `mov sp` instructions in
-    /// unknown contexts would corrupt ordinary stack handling. Those sites are
-    /// therefore left untouched until phase-0 evidence shows which of them are
-    /// actually reached.
+    /// Matches both:
+    /// 1. Forward-order `mov sp, Xn -> mov x30, Xn -> br Xm` within the same basic block.
+    /// 2. Consecutive reversed-order `(sub/mov x29) -> (sub/mov x30) -> mov sp, Xn -> br Xm`.
     private static func locateTrap(_ base: UnsafeMutablePointer<UInt32>, at index: Int,
-                                   last: Int) -> (sp: Int, lr: Int, branch: Int)? {
+                                   last: Int) -> TrapSite? {
         if let register = poisonedStackPointer(base[index]),
            let lr = nextMatch(base, from: index + 1, limit: index + poisonPairWindow, last: last,
                               matching: { movedReturnAddress($0, from: register) }),
            let branch = nextMatch(base, from: lr + 1, limit: lr + poisonBranchWindow, last: last,
                                   matching: isIndirectBranch) {
-            return (index, lr, branch)
+            return TrapSite(fp: nil, sp: index, lr: lr, branch: branch)
+        }
+
+        if index + 3 < last,
+           let register = poisonedStackPointer(base[index + 2]),
+           poisonedFramePointer(base[index], from: register),
+           poisonedLinkRegister(base[index + 1], from: register),
+           isIndirectBranch(base[index + 3]) {
+            return TrapSite(fp: index, sp: index + 2, lr: index + 1, branch: index + 3)
         }
 
         return nil
@@ -718,60 +1097,53 @@ extension Macho {
         var cursor = start
         let upper = min(limit, last - 1)
         while cursor <= upper {
-            if predicate(base[cursor]) { return cursor }
+            let word = base[cursor]
+            if predicate(word) { return cursor }
+            if isControlFlowBoundary(word) { return nil }
             cursor += 1
         }
         return nil
     }
 
-    /// Returns the `LC_BUILD_VERSION` platform of the first architecture in `url`
+    /// Returns the `LC_BUILD_VERSION` platform of the selected architecture in `url`
     /// (2 = iOS, 6 = Mac Catalyst).
     static func buildPlatform(at url: URL) throws -> UInt32? {
-        let binary = try Data(contentsOf: url)
-        guard binary.count >= 32 else { return nil }
-
-        var sliceStart = 0
-        var sliceEnd = binary.count
-        if binary.count >= 8 {
-            let magic = binary.extract(UInt32.self)
-            if magic == FAT_MAGIC || magic == FAT_CIGAM {
-                var header = binary.extract(fat_header.self)
-                let swapped = header.magic == FAT_CIGAM
-                if swapped { swap_fat_header(&header, NXHostByteOrder()) }
-                guard header.nfat_arch > 0 else { return nil }
-                var arch = binary.extract(fat_arch.self, offset: MemoryLayout.size(ofValue: header))
-                if swapped { swap_fat_arch(&arch, 1, NXHostByteOrder()) }
-                sliceStart = Int(arch.offset)
-                sliceEnd = sliceStart + Int(arch.size)
-            }
-        }
-        guard sliceEnd <= binary.count, sliceEnd - sliceStart >= 32 else { return nil }
-
-        var header = binary.extract(mach_header_64.self, offset: sliceStart)
-        let shouldSwap = header.magic == MH_CIGAM_64
-        guard header.magic == MH_MAGIC_64 || shouldSwap else { return nil }
-        if shouldSwap { swap_mach_header_64(&header, NXHostByteOrder()) }
-
-        var offset = sliceStart + MemoryLayout<mach_header_64>.size
-        for _ in 0..<header.ncmds {
-            guard offset + 8 <= sliceEnd else { break }
-            let cmd = binary.extract(load_command.self, offset: offset,
-                                     swap: shouldSwap ? swap_load_command : nil)
-            if cmd.cmd == UInt32(LC_BUILD_VERSION), offset + 12 <= sliceEnd {
-                return readU32(binary, offset: offset + 8, swap: shouldSwap)
-            }
-            guard cmd.cmdsize > 0 else { break }
-            offset += Int(cmd.cmdsize)
-        }
-        return nil
+        var binary = try Data(contentsOf: url, options: .mappedIfSafe)
+        guard (try? stripBinary(&binary)) != nil else { return nil }
+        var platform: UInt32?
+        guard (try? iterateLoadCommands(binary: binary, { offset, shouldSwap in
+            let command = binary.extract(load_command.self, offset: offset,
+                                         swap: shouldSwap ? swap_load_command : nil)
+            guard command.cmd == UInt32(LC_BUILD_VERSION),
+                  command.cmdsize >= MemoryLayout<build_version_command>.size else { return false }
+            let version = binary.extract(build_version_command.self, offset: offset,
+                                         swap: shouldSwap ? swap_build_version_command : nil)
+            platform = version.platform
+            return true
+        })) != nil else { return nil }
+        return platform
     }
 
-    /// `add sp, Xn, #0` returns the source register, excluding sp/fp.
+    /// `add sp, Xn, #0` (`mov sp, Xn`), excluding sp/fp as the source.
     private static func poisonedStackPointer(_ word: UInt32) -> Int? {
-        guard (word & 0xFFFF_FC00) == 0x9100_0000 else { return nil }
+        guard (word & 0xFFFF_FC1F) == 0x9100_001F else { return nil }
         let register = Int((word >> 5) & 0x1F)
         guard register != 29 && register != 31 else { return nil }
         return register
+    }
+
+    /// `sub x29, x29, x29`, `mov x29, xzr`, or `mov x29, Xn`.
+    private static func poisonedFramePointer(_ word: UInt32, from register: Int) -> Bool {
+        word == 0xCB1D_03BD
+            || word == 0xAA1F_03FD
+            || word == (0xAA00_03FD | UInt32(register << 16))
+    }
+
+    /// `sub x30, x30, x30`, `mov x30, xzr`, or `mov x30, Xn`.
+    private static func poisonedLinkRegister(_ word: UInt32, from register: Int) -> Bool {
+        word == 0xCB1E_03DE
+            || word == 0xAA1F_03FE
+            || word == (0xAA00_03FE | UInt32(register << 16))
     }
 
     /// `orr x30, xzr, Xn` - identical source register as the poisoned sp.
@@ -783,6 +1155,23 @@ extension Macho {
     /// `br Xm` (register branch, not `blr`).
     private static func isIndirectBranch(_ word: UInt32) -> Bool {
         (word & 0xFFFF_FC1F) == 0xD61F_0000
+    }
+
+    /// Terminators and branch instructions that end or leave the current linear instruction stream.
+    private static func isControlFlowBoundary(_ word: UInt32) -> Bool {
+        if (word & 0xFFFF_FC1F) == 0xD65F_0000 { return true } // ret / ret Xn
+        if word == 0xD65F_0BFF || word == 0xD65F_0FFF { return true } // retaa / retab
+        if isIndirectBranch(word) { return true } // br Xn
+        if (word & 0xFFFF_FC1F) == 0xD63F_0000 { return true } // blr Xn
+        if (word & 0xFC00_0000) == 0x1400_0000 { return true } // b imm26
+        if (word & 0xFC00_0000) == 0x9400_0000 { return true } // bl imm26
+        if (word & 0xFF00_0010) == 0x5400_0000 { return true } // b.cond
+        if (word & 0x7E00_0000) == 0x3400_0000 { return true } // cbz / cbnz
+        if (word & 0x7E00_0000) == 0x3600_0000 { return true } // tbz / tbnz
+        if (word & 0xFFE0_001F) == 0xD420_0000 { return true } // brk
+        if (word & 0xFFE0_001F) == 0xD440_0000 { return true } // hlt
+        if (word >> 16) == 0 { return true } // udf
+        return false
     }
 
     private static func readU32(_ binary: Data, offset: Int, swap: Bool) -> UInt32 {

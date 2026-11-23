@@ -5,6 +5,7 @@
 //  Created by Александр Дорофеев on 24.11.2021.
 //
 
+import Darwin
 import Foundation
 
 class Installer {
@@ -66,7 +67,8 @@ class Installer {
 
             do {
                 InstallVM.shared.next(.unzip, 0.0, 0.5)
-                try ipa.allocateTempDir()
+                if !export { try AppsVM.ensureBaseDirectoriesExist() }
+                try ipa.allocateTempDir(near: export ? nil : AppsVM.appDirectory)
 
                 let app = try ipa.unzip()
                 if await ipa.checkOfficialMacOS(app: IPA.Application.base(app)) {
@@ -75,7 +77,8 @@ class Installer {
                     return
                 }
                 InstallVM.shared.next(.library, 0.5, 0.55)
-                try saveEntitlements(app)
+                let originalEntitlements = try Entitlements.dumpEntitlements(exec: app.executable)
+                if export { try originalEntitlements.store(app.entitlements) }
                 let machos = resolveValidMachOs(app)
                 app.validMachOs = machos
 
@@ -83,7 +86,11 @@ class Installer {
 
                 for macho in machos {
                     if try Macho.isMachoEncrypted(atURL: macho) {
-                        throw PlayCoverError.appEncrypted
+                        if macho == app.executable {
+                            throw PlayCoverError.appEncrypted
+                        }
+                        print("Skipping encrypted secondary Mach-O: \(macho.lastPathComponent)")
+                        continue
                     }
 
                     if !export {
@@ -115,16 +122,13 @@ class Installer {
 
                 if export {
                     finalURL = try ipa.packIPABack(app: app.url)
+                    try ipa.removeQuarantine(finalURL)
                 } else {
-                    finalURL = try wrap(app)
-                    let installedApp = PlayApp(appUrl: finalURL)
-
-                    installedApp.sign()
-                    installedApp.removeAlias()
-                    installedApp.createAlias()
+                    try ipa.removeQuarantine(app.url)
+                    finalURL = try installPreparedApp(app, hasPlayTools: installPlayTools,
+                                                      originalEntitlements: originalEntitlements).url
                 }
 
-                try ipa.removeQuarantine(finalURL)
                 InstallVM.shared.next(.finish, 0.95, 1.0)
                 returnCompletion(finalURL)
             } catch {
@@ -250,12 +254,6 @@ class Installer {
         return resolved
     }
 
-    /// Wrapper for codesign, applies the given entitlements to the application and all of its contents
-    static func saveEntitlements(_ baseApp: BaseApp) throws {
-        let toSave = try Entitlements.dumpEntitlements(exec: baseApp.executable)
-        try toSave.store(baseApp.entitlements)
-    }
-
     static func removeMobileProvision(_ baseApp: BaseApp) throws {
         let provision = baseApp.url.appendingPathComponent("embedded.mobileprovision")
         if FileManager.default.fileExists(atPath: provision.path) {
@@ -263,20 +261,49 @@ class Installer {
         }
     }
 
-    /// Generates a wrapper bundle for an iOS app that allows it to be launched from Finder and other macOS UIs
-    static func wrap(_ baseApp: BaseApp) throws -> URL {
-        let info = AppInfo(contentsOf: baseApp.url
-            .appendingPathComponent("Info")
-            .appendingPathExtension("plist"))
+    private static func installPreparedApp(_ baseApp: BaseApp, hasPlayTools: Bool,
+                                           originalEntitlements: [String: Any]) throws -> PlayApp {
+        let candidate = PlayApp(appUrl: baseApp.url)
+        let info = candidate.info
+        guard try Macho.isMachoValidArch(candidate.executable) else { throw PlayCoverError.appCorrupted }
+        _ = try PlayTools.configureMarketplaceKitCompatibility(info, in: candidate.url)
+        PlayTools.reportUnresolvedLaunchDependencies(info, in: candidate.url)
+        if hasPlayTools {
+            try info.enableMacResizingForLegacyPortraitApp()
+        }
+
+        // The entitlement record travels with the signed bundle during replacement.
+        try originalEntitlements.store(candidate.bundledOriginalEntitlements)
+        try candidate.signBundle()
+        try Shell.run(print: false, "/usr/bin/codesign", "--verify", "--deep", "--strict", candidate.url.path)
+
         let location = AppsVM.appDirectory
             .appendingEscapedPathComponent(info.bundleIdentifier)
             .appendingPathExtension("app")
-        if FileManager.default.fileExists(atPath: location.path) {
-            try FileManager.default.removeItem(at: location)
+        let installedPath = location.resolvingSymlinksInPath().path + "/"
+        if NSRunningApplication.runningApplications(withBundleIdentifier: info.bundleIdentifier).contains(where: {
+            !$0.isTerminated && $0.executableURL?.resolvingSymlinksInPath().path.hasPrefix(installedPath) == true
+        }) {
+            throw PlayCoverError.appRunningDuringInstall
         }
 
-        try FileManager.default.moveItem(at: baseApp.url, to: location)
-        return location
+        try publishBundle(candidate.url, at: location)
+        let installed = PlayApp(appUrl: location)
+        do {
+            try originalEntitlements.store(installed.entitlements)
+        } catch {
+            Log.shared.log("Could not update the legacy entitlement record: \(error.localizedDescription)")
+        }
+        installed.removeAlias()
+        installed.createAlias()
+        return installed
+    }
+
+    /// Both paths are on the install volume. An old bundle stays live until the kernel commits the swap.
+    private static func publishBundle(_ candidate: URL, at location: URL) throws {
+        if renamex_np(candidate.path, location.path, UInt32(RENAME_EXCL)) == 0 { return }
+        if errno == EEXIST && renamex_np(candidate.path, location.path, UInt32(RENAME_SWAP)) == 0 { return }
+        throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
     }
 }
 
@@ -286,17 +313,22 @@ extension Installer {
         let ipa = IPA(url: ipaUrl)
         defer { ipa.releaseTempDir() }
 
-        try ipa.allocateTempDir()
+        try AppsVM.ensureBaseDirectoriesExist()
+        try ipa.allocateTempDir(near: AppsVM.appDirectory)
         let app = try ipa.unzip()
 
         // Skip interactive Mac App Store alert (checkOfficialMacOS) in headless CLI mode.
-        try saveEntitlements(app)
+        let originalEntitlements = try Entitlements.dumpEntitlements(exec: app.executable)
         let machos = resolveValidMachOs(app)
         app.validMachOs = machos
 
         for macho in machos {
             if try Macho.isMachoEncrypted(atURL: macho) {
-                throw PlayCoverError.appEncrypted
+                if macho == app.executable {
+                    throw PlayCoverError.appEncrypted
+                }
+                print("Skipping encrypted secondary Mach-O: \(macho.lastPathComponent)")
+                continue
             }
             try Macho.convertMacho(macho, in: app.url)
             try Shell.signMacho(macho)
@@ -312,16 +344,11 @@ extension Installer {
         info.assert(minimumVersion: 11.0)
         try info.write()
 
-        try AppsVM.ensureBaseDirectoriesExist()
         let playChainDir = PlayTools.playCoverContainer.appendingPathComponent("PlayChain")
         try FileManager.default.createDirectory(at: playChainDir, withIntermediateDirectories: true)
-        let finalURL = try wrap(app)
-        let installedApp = PlayApp(appUrl: finalURL)
+        try ipa.removeQuarantine(app.url)
+        let installedApp = try installPreparedApp(app, hasPlayTools: true, originalEntitlements: originalEntitlements)
         installedApp.settings.sync()
-        installedApp.sign()
-        installedApp.removeAlias()
-        installedApp.createAlias()
-        try ipa.removeQuarantine(finalURL)
         return installedApp
     }
 }

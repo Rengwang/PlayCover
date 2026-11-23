@@ -21,6 +21,9 @@ class PlayTools {
         .appendingPathComponent("PlugIns")
         .appendingPathComponent("AKInterface")
         .appendingPathExtension("bundle")
+    private static let marketplaceKitCompatibility = playToolsFramework
+        .appendingPathComponent("Resources")
+        .appendingPathComponent("MarketplaceKitCompatibility")
     private static let bundledPlayToolsFramework = Bundle.main.bundleURL
         .appendingPathComponent("Contents")
         .appendingPathComponent("Frameworks")
@@ -99,6 +102,35 @@ class PlayTools {
         }
     }
 
+    static func configureMarketplaceKitCompatibility(_ info: AppInfo, in bundle: URL) throws -> Bool {
+        let executable = bundle.appendingEscapedPathComponent(info.executableName)
+        let compatibilityBinary = marketplaceKitCompatibility
+            .appendingPathComponent("MarketplaceKit.framework")
+            .appendingPathComponent("MarketplaceKit")
+        // Enable for any app requiring unavailable MarketplaceKit if all imported symbols are covered by the stub.
+        let enabled = Macho.supportsMarketplaceKitCompatibility(executable,
+                                                                in: bundle,
+                                                                stubBinary: compatibilityBinary)
+        return try info.updateManagedFrameworkPath(marketplaceKitCompatibility.path, enabled: enabled)
+    }
+
+    static func reportUnresolvedLaunchDependencies(_ info: AppInfo, in bundle: URL) {
+        let managedPath = marketplaceKitCompatibility.path
+        let environment = info.lsEnvironment
+        guard !Macho.hasCustomLibrarySearch(environment, exceptFrameworkPath: managedPath) else { return }
+
+        let executable = bundle.appendingEscapedPathComponent(info.executableName)
+        let usingMarketplaceCompatibility = environment["DYLD_FRAMEWORK_PATH"] == managedPath
+        if let missing = Macho.firstUnavailableHostLibrary(executable, in: bundle, matching: { path in
+            !usingMarketplaceCompatibility || path != Macho.marketplaceKitInstallName
+        }) {
+            let diagnostic = missing.path == Macho.marketplaceKitInstallName
+                ? PlayCoverError.marketplaceKitUnavailable
+                : PlayCoverError.hostDependencyUnavailable(path: missing.path, image: missing.image)
+            Log.shared.log(diagnostic.localizedDescription)
+        }
+    }
+
     /// Path of the iOS slice used when exporting an IPA for a real device.
     private static func iosInjectPath() throws -> URL {
         let executable = bundledIOSPlayToolsFramework.appendingPathComponent("PlayTools")
@@ -143,14 +175,14 @@ class PlayTools {
         }
     }
 
-    static func installPluginInIPA(_ payload: URL, reusingInstalledFiles: Bool = false) throws {
+    static func installPluginInIPA(_ payload: URL, reusingInstalledFiles: Bool = false,
+                                   willChange: () throws -> Void = {}) throws {
         let allFiles = try FileManager.default.contentsOfDirectory(
             at: bundledPlayToolsFramework, includingPropertiesForKeys: [])
         for localizationDirectory in allFiles where localizationDirectory.pathExtension == "lproj" {
-            _ = try copyAsset(target: payload,
-                              directoryName: localizationDirectory.lastPathComponent,
-                              component: "Playtools", pathExtension: "strings",
-                              reusingInstalledFiles: reusingInstalledFiles)
+            try copyAsset(target: payload, directoryName: localizationDirectory.lastPathComponent,
+                          component: "Playtools", pathExtension: "strings",
+                          reusingInstalledFiles: reusingInstalledFiles, willChange: willChange)
         }
 
         let bundledPlayToolsResources = bundledPlayToolsFramework
@@ -161,21 +193,20 @@ class PlayTools {
             let allFiles = try FileManager.default.contentsOfDirectory(
                 at: bundledPlayToolsResources, includingPropertiesForKeys: [])
             for localizationDirectory in allFiles where localizationDirectory.pathExtension == "lproj" {
-                _ = try copyAsset(source: bundledPlayToolsResources,
-                                  target: payload,
-                                  directoryName: localizationDirectory.lastPathComponent,
-                                  component: "Playtools", pathExtension: "strings",
-                                  reusingInstalledFiles: reusingInstalledFiles)
+                try copyAsset(source: bundledPlayToolsResources, target: payload,
+                              directoryName: localizationDirectory.lastPathComponent,
+                              component: "Playtools", pathExtension: "strings",
+                              reusingInstalledFiles: reusingInstalledFiles, willChange: willChange)
             }
         }
 
-        try installComponentBundles(into: payload, reusingInstalledFiles: reusingInstalledFiles)
+        try installComponentBundles(into: payload, reusingInstalledFiles: reusingInstalledFiles, willChange: willChange)
     }
 
-    static func installComponentBundles(into payload: URL, reusingInstalledFiles: Bool) throws {
+    private static func installComponentBundles(into payload: URL, reusingInstalledFiles: Bool,
+                                                willChange: () throws -> Void) throws {
         let pluginsSource = bundledPlayToolsFramework.appendingPathComponent("PlugIns")
         let pluginsTarget = payload.appendingPathComponent("PlugIns")
-        try FileManager.default.createDirectory(at: pluginsTarget, withIntermediateDirectories: true)
 
         let bundleNames = try FileManager.default.contentsOfDirectory(atPath: pluginsSource.path)
         let bundles = bundleNames
@@ -191,20 +222,28 @@ class PlayTools {
                FileManager.default.isExecutableFile(atPath: executable.path) {
                 continue
             }
-            if FileManager.default.fileExists(atPath: bundleTarget.path) {
-                try FileManager.default.removeItem(at: bundleTarget)
+            let fileManager = FileManager.default
+            let stagingDirectory = try fileManager.url(for: .itemReplacementDirectory, in: .userDomainMask,
+                                                       appropriateFor: payload, create: true)
+            defer { try? fileManager.removeItem(at: stagingDirectory) }
+            let stagedBundle = stagingDirectory.appendingPathComponent(bundleSource.lastPathComponent)
+            try fileManager.copyItem(at: bundleSource, to: stagedBundle)
+            try stagedBundle.fixExecutable()
+            try Shell.signMacho(stagedBundle)
+            try willChange()
+            try fileManager.createDirectory(at: pluginsTarget, withIntermediateDirectories: true)
+            if fileManager.fileExists(atPath: bundleTarget.path) {
+                _ = try fileManager.replaceItemAt(bundleTarget, withItemAt: stagedBundle)
+            } else {
+                try fileManager.moveItem(at: stagedBundle, to: bundleTarget)
             }
-            try FileManager.default.copyItem(at: bundleSource, to: bundleTarget)
-            try bundleTarget.fixExecutable()
-            try Shell.signMacho(bundleTarget)
         }
     }
 
-    static func copyAsset(source: URL = bundledPlayToolsFramework, target: URL, directoryName: String,
-                          component: String, pathExtension: String,
-                          reusingInstalledFiles: Bool) throws -> URL {
+    private static func copyAsset(source: URL = bundledPlayToolsFramework, target: URL, directoryName: String,
+                                  component: String, pathExtension: String, reusingInstalledFiles: Bool,
+                                  willChange: () throws -> Void) throws {
         let directory = target.appendingPathComponent(directoryName)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
 
         let target = directory
                     .appendingPathComponent(component)
@@ -217,15 +256,12 @@ class PlayTools {
         if reusingInstalledFiles,
            FileManager.default.isReadableFile(atPath: target.path),
            FileManager.default.contentsEqual(atPath: source.path, andPath: target.path) {
-            return target
+            return
         }
-        do {
-            try FileManager.default.copyItem(at: source, to: target)
-        } catch {
-            try FileManager.default.removeItem(at: target)
-            try FileManager.default.copyItem(at: source, to: target)
-        }
-        return target
+        let contents = try Data(contentsOf: source)
+        try willChange()
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try contents.write(to: target, options: .atomic)
     }
 
     static func injectInIPA(_ exec: URL, payload: URL) throws {
@@ -290,43 +326,6 @@ class PlayTools {
         })
     }
 
-    private static func arm64SliceOffset(in handle: FileHandle) throws -> UInt64 {
-        guard let magicData = try handle.read(upToCount: MemoryLayout<UInt32>.size),
-              magicData.count == MemoryLayout<UInt32>.size else {
-            throw PlayCoverError.appCorrupted
-        }
-        let magic = magicData.extract(UInt32.self)
-        guard magic == FAT_MAGIC || magic == FAT_CIGAM else { return 0 }
-
-        try handle.seek(toOffset: 0)
-        let fatHeaderSize = MemoryLayout<fat_header>.size
-        guard let fatHeaderData = try handle.read(upToCount: fatHeaderSize),
-              fatHeaderData.count == fatHeaderSize else {
-            throw PlayCoverError.appCorrupted
-        }
-        let shouldSwapFat = magic == FAT_CIGAM
-        var fatHeader = fatHeaderData.extract(fat_header.self)
-        if shouldSwapFat { swap_fat_header(&fatHeader, NXHostByteOrder()) }
-
-        let archCount = Int(fatHeader.nfat_arch)
-        let archSize = MemoryLayout<fat_arch>.size
-        let archTableSize = archCount * archSize
-        guard archCount > 0, archTableSize <= 1024 * 1024,
-              let archData = try handle.read(upToCount: archTableSize),
-              archData.count == archTableSize else {
-            throw PlayCoverError.appCorrupted
-        }
-
-        for index in 0..<archCount {
-            var arch = archData.extract(fat_arch.self, offset: index * archSize)
-            if shouldSwapFat { swap_fat_arch(&arch, 1, NXHostByteOrder()) }
-            if arch.cputype == CPU_TYPE_ARM64 {
-                return UInt64(arch.offset)
-            }
-        }
-        throw PlayCoverError.failedToStripBinary
-    }
-
     private struct MachOLoadCommands {
         let data: Data
         let ncmds: UInt32
@@ -335,11 +334,12 @@ class PlayTools {
 
     private static func loadCommandsData(
         in handle: FileHandle,
-        at sliceOffset: UInt64
+        inSlice slice: Range<UInt64>
     ) throws -> MachOLoadCommands {
-        try handle.seek(toOffset: sliceOffset)
+        try handle.seek(toOffset: slice.lowerBound)
         let headerSize = MemoryLayout<mach_header_64>.size
-        guard let headerData = try handle.read(upToCount: headerSize),
+        let sliceSize = slice.upperBound - slice.lowerBound
+        guard sliceSize >= UInt64(headerSize), let headerData = try handle.read(upToCount: headerSize),
               headerData.count == headerSize else {
             throw PlayCoverError.appCorrupted
         }
@@ -352,6 +352,7 @@ class PlayTools {
 
         let commandsSize = Int(header.sizeofcmds)
         guard commandsSize > 0, commandsSize <= 16 * 1024 * 1024,
+              UInt64(commandsSize) <= sliceSize - UInt64(headerSize),
               let commandsData = try handle.read(upToCount: commandsSize),
               commandsData.count == commandsSize else {
             throw PlayCoverError.appCorrupted
@@ -363,8 +364,8 @@ class PlayTools {
         let handle = try FileHandle(forReadingFrom: url)
         defer { try? handle.close() }
 
-        let sliceOffset = try arm64SliceOffset(in: handle)
-        let commands = try loadCommandsData(in: handle, at: sliceOffset)
+        let slice = try Macho.selectedArm64Slice(in: handle)
+        let commands = try loadCommandsData(in: handle, inSlice: slice)
         let commandsData = commands.data
 
         var offset = 0
@@ -378,7 +379,7 @@ class PlayTools {
                                                    swap: commands.shouldSwap ? swap_load_command : nil)
             let cmdSize = Int(loadCommand.cmdsize)
             let commandEnd = offset + cmdSize
-            guard commandEnd <= commandsData.count && commandEnd > offset else {
+            guard cmdSize >= MemoryLayout<load_command>.size, commandEnd <= commandsData.count else {
                 throw PlayCoverError.appCorrupted
             }
             if loadCommand.cmd == UInt32(LC_LOAD_DYLIB),
@@ -388,10 +389,9 @@ class PlayTools {
                                                         swap: commands.shouldSwap ? swap_dylib_command : nil)
                 let strOffset = Int(dylibCommand.dylib.name.offset)
                 if strOffset >= MemoryLayout<dylib_command>.size && strOffset < cmdSize {
-                    let dylibName = String(data: commandsData,
-                                           offset: offset,
-                                           commandSize: cmdSize,
-                                           loadCommandString: dylibCommand.dylib.name)
+                    let name = commandsData[(offset + strOffset)..<commandEnd]
+                    let end = name.firstIndex(of: 0) ?? name.endIndex
+                    let dylibName = String(bytes: name[..<end], encoding: .utf8)
                     if dylibName == expectedDylib {
                         return true
                     }

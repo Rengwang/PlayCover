@@ -23,6 +23,10 @@ public class BaseApp {
             .appendingPathExtension("plist")
     }
 
+    var bundledOriginalEntitlements: URL {
+        url.appendingPathComponent("PlayCoverOriginalEntitlements.plist")
+    }
+
     init(appUrl: URL) {
         url = appUrl
         info = AppInfo(contentsOf: url.appendingPathComponent("Info")

@@ -85,12 +85,15 @@ class PlayApp: BaseApp {
             // Auto-repair previously installed bundles whose Mach-O binaries were skipped
             // (e.g. executable names containing dots) and remain unconverted.
             let didRepairMacho = try await repairMachOsIfNeeded()
+            let updatedMarketplaceKit = try PlayTools.configureMarketplaceKitCompatibility(info, in: url)
 
             // Install PlugIns/localizations before signing so the bundle is fully
             // assembled before its signature is sealed over its contents.
             // If the app does not have PlayTools, do not install PlugIns
-            if hasPlayTools() {
-                try PlayTools.installPluginInIPA(url, reusingInstalledFiles: true)
+            let playToolsInstalled = hasPlayTools()
+            if playToolsInstalled {
+                try PlayTools.installPluginInIPA(url, reusingInstalledFiles: true,
+                                                 willChange: invalidatePlayToolsResourceSeal)
             }
 
             // Neutralize any __RESTRICT/__restrict segment in place so dyld allows
@@ -98,13 +101,27 @@ class PlayApp: BaseApp {
             // installed bundles.
             let strippedRestrict = (try? Macho.stripRestrictSegment(atURL: executable)) ?? false
 
-            if try cleanedProxyShield || didRepairMacho || strippedRestrict
+            if try updatedMarketplaceKit || cleanedProxyShield || didRepairMacho || strippedRestrict
                 || !Entitlements.areEntitlementsValid(app: self) {
-                sign()
+                if playToolsInstalled {
+                    try invalidatePlayToolsResourceSeal()
+                }
+                try signBundle()
             }
 
             if try !isInfoPlistSigned() {
                 try Shell.signApp(executable)
+            }
+
+            if playToolsInstalled {
+                try info.enableMacResizingForLegacyPortraitApp {
+                    try Shell.signApp(self.executable)
+                }
+                try verifyPlayToolsResourceSealIfNeeded()
+            }
+
+            if !settings.openWithLLDB {
+                PlayTools.reportUnresolvedLaunchDependencies(info, in: url)
             }
 
             // Wait for keychain unlock to finish before continuing
@@ -152,7 +169,11 @@ class PlayApp: BaseApp {
         var convertedAny = false
         for macho in machos {
             if try Macho.isMachoEncrypted(atURL: macho) {
-                throw PlayCoverError.appEncrypted
+                if macho == executable {
+                    throw PlayCoverError.appEncrypted
+                }
+                print("Skipping encrypted secondary Mach-O: \(macho.lastPathComponent)")
+                continue
             }
             let needsConversion = try !Macho.isMachoValidArch(macho)
             let repairedLibraries: Bool
@@ -161,10 +182,12 @@ class PlayApp: BaseApp {
                 convertedAny = true
                 repairedLibraries = false
             } else if scanNeeded {
-                repairedLibraries = try Macho.repairSwiftLibraries(in: macho, app: url)
+                repairedLibraries = try Macho.repairSystemLibraryAliases(in: macho, app: url)
             } else {
                 repairedLibraries = false
             }
+            let restoredSDK = scanNeeded && macho == executable
+                ? try Macho.restoreApplicationSDK(at: macho, sdkName: info[string: "DTSDKName"]) : false
             var patchedTraps = 0
             // A converted slice must always be rescanned, otherwise a fresh
             // conversion would skip the guard for this launch.
@@ -174,7 +197,7 @@ class PlayApp: BaseApp {
                     print("Neutralized \(patchedTraps) anti-tamper trap stub(s) in \(macho.lastPathComponent)")
                 }
             }
-            if needsConversion || repairedLibraries || patchedTraps > 0 {
+            if needsConversion || repairedLibraries || restoredSDK || patchedTraps > 0 {
                 try Shell.signMacho(macho)
                 needsBundleResign = true
             }
@@ -212,7 +235,8 @@ class PlayApp: BaseApp {
             return "\(relativePath):\(size):\(modified)"
         }
         let systemVersion = ProcessInfo.processInfo.operatingSystemVersionString
-        return (["swift:\(Macho.swiftLibrarySchemaVersion):\(systemVersion)"] + entries.sorted())
+        let sdkName = info[string: "DTSDKName"] ?? ""
+        return (["libraries:\(Macho.libraryRepairSchemaVersion):\(systemVersion)", "sdk:1:\(sdkName)"] + entries.sorted())
             .joined(separator: "|")
     }
 }
@@ -415,6 +439,7 @@ extension PlayApp {
 extension PlayApp {
     func unlockKeyCover() async {
         if KeyCover.shared.isKeyCoverEnabled() {
+            await KeyCover.prepareManagedPassword()
             let keychain = KeyCover.shared.listKeychains()
                 .first(where: { $0.appBundleID == self.info.bundleIdentifier })
 
@@ -499,6 +524,31 @@ extension PlayApp {
         FileManager.default.fileExists(atPath: aliasURL.path)
     }
 
+    // Existing installs verify once. Invalidate the receipt before resource mutations so
+    // an interrupted update still verifies and repairs the outer seal on the next launch.
+    private var playToolsResourceSealReceipt: URL {
+        settings.settingsUrl.deletingPathExtension().appendingPathExtension("playtools-seal-v1")
+    }
+
+    private func invalidatePlayToolsResourceSeal() throws {
+        let receipt = playToolsResourceSealReceipt
+        guard FileManager.default.fileExists(atPath: receipt.path) else { return }
+        try FileManager.default.removeItem(at: receipt)
+    }
+
+    private func verifyPlayToolsResourceSealIfNeeded() throws {
+        let receipt = playToolsResourceSealReceipt
+        guard !FileManager.default.fileExists(atPath: receipt.path) else { return }
+        let verify = { try Shell.run(print: false, "/usr/bin/codesign", "--verify", "--strict", self.url.path) }
+        do {
+            _ = try verify()
+        } catch {
+            try signBundle()
+            _ = try verify()
+        }
+        try Data().write(to: receipt, options: .atomic)
+    }
+
     func isInfoPlistSigned() throws -> Bool {
         try Shell.run("/usr/bin/codesign", "-dv", executable.path).contains("Info.plist entries")
     }
@@ -526,20 +576,14 @@ extension PlayApp {
         AppsVM.shared.fetchApps()
     }
 
-    func sign() {
-        do {
-            let tmpDir = FileManager.default.temporaryDirectory
-            let tmpEnts = tmpDir
-                .appendingEscapedPathComponent(ProcessInfo().globallyUniqueString)
-                .appendingPathExtension("plist")
-            let conf = try Entitlements.composeEntitlements(self)
-            try conf.store(tmpEnts)
-            try Shell.signAppWith(executable, entitlements: tmpEnts)
-            try FileManager.default.removeItem(at: tmpEnts)
-        } catch {
-            print(error)
-            Log.shared.error(error)
-        }
+    func signBundle() throws {
+        let tmpEnts = FileManager.default.temporaryDirectory
+            .appendingEscapedPathComponent(ProcessInfo().globallyUniqueString)
+            .appendingPathExtension("plist")
+        defer { try? FileManager.default.removeItem(at: tmpEnts) }
+        let conf = try Entitlements.composeEntitlements(self)
+        try conf.store(tmpEnts)
+        try Shell.signAppWith(executable, entitlements: tmpEnts)
     }
 }
 

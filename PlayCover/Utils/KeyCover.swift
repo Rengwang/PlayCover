@@ -26,25 +26,67 @@ struct KeyCover {
         return playChainDir
     }
 
-    // This is only exposed at runtime
-    var keyCoverPlainTextKey: String? = KeyCoverPreferences.shared.keyCoverEnabled == .selfGeneratedPassword
-    ? KeyCoverPassword.shared.getKeyCoverPassword() : nil
+    private var passwordGeneration = UUID()
+    var keyCoverPlainTextKey: String? {
+        didSet { passwordGeneration = UUID() }
+    }
+
+    @MainActor private static var managedPasswordLookup: Task<Bool, Never>?
+    @MainActor private static var managedPasswordAttemptedGeneration: UUID?
+    @MainActor private static var managedPasswordMissing = false
+
+    /// Share one automatic authorization attempt across app launches. KeyCover settings can retry.
+    @discardableResult
+    @MainActor
+    static func prepareManagedPassword(retry: Bool = false) async -> Bool {
+        guard KeyCoverPreferences.shared.keyCoverEnabled == .selfGeneratedPassword,
+              shared.keyCoverPlainTextKey == nil else { return false }
+        if let pending = managedPasswordLookup {
+            return await pending.value
+        }
+        let generation = shared.passwordGeneration
+        if !retry, managedPasswordAttemptedGeneration == generation {
+            return managedPasswordMissing
+        }
+        let lookup = Task { @MainActor () -> Bool in
+            defer { managedPasswordLookup = nil }
+            let result: (password: String?, status: OSStatus) = await withCheckedContinuation { continuation in
+                DispatchQueue.global(qos: .userInitiated).async {
+                    continuation.resume(returning: KeyCoverPassword.shared.readKeyCoverPassword())
+                }
+            }
+            guard KeyCoverPreferences.shared.keyCoverEnabled == .selfGeneratedPassword,
+                  shared.passwordGeneration == generation else { return false }
+            managedPasswordAttemptedGeneration = generation
+            managedPasswordMissing = result.status == errSecItemNotFound
+            if let password = result.password {
+                shared.keyCoverPlainTextKey = password
+                KeyCoverObservable.shared.update()
+            }
+            return managedPasswordMissing
+        }
+        managedPasswordLookup = lookup
+        return await lookup.value
+    }
 
     func isKeyCoverEnabled() -> Bool {
         return KeyCoverPreferences.shared.keyCoverEnabled != .disabled
     }
 
     func listKeychains() -> [KeyCoverKey] {
-        // Enumerate all the keychains
+        // Enumerate all the keychains without creating duplicates from SQLite WAL/SHM sidecars.
         let keychains = try? FileManager.default
             .contentsOfDirectory(at: KeyCover.playChainPath,
                                  includingPropertiesForKeys: nil,
                                  options: .skipsHiddenFiles)
+        var seen: Set<String> = []
         var keychainList: [KeyCoverKey] = []
         for keychain in keychains ?? [] {
+            let ext = keychain.pathExtension
+            guard ext == "db" || ext == KeyCoverKey.encryptedKeyExtension else { continue }
             let keychainName = keychain.deletingPathExtension().lastPathComponent
-            let keychain = KeyCoverKey(appBundleID: keychainName)
-            keychainList.append(keychain)
+            guard seen.insert(keychainName).inserted else { continue }
+            keychainList.append(KeyCoverKey(appBundleID: keychainName))
         }
         return keychainList
     }
@@ -59,12 +101,14 @@ struct KeyCover {
 
     func unlockChain(_ keychain: KeyCoverKey) async throws {
         if keyCoverPlainTextKey == nil {
-            let task = Task {@MainActor in
+            // A managed password is supplied by the system keychain. Its denial
+            // cannot be resolved by asking the user to type that generated password.
+            guard KeyCoverPreferences.shared.keyCoverEnabled == .userProvidedPassword else { return }
+            await MainActor.run {
                 KeyCoverObservable.shared.isKeyCoverUnlockingPromptShown = true
             }
-            await task.value
-            while KeyCoverObservable.shared.isKeyCoverUnlockingPromptShown {
-                sleep(1)
+            while await MainActor.run(body: { KeyCoverObservable.shared.isKeyCoverUnlockingPromptShown }) {
+                try await Task.sleep(nanoseconds: 100_000_000)
             }
         }
         if keychain.chainEncryptionStatus {
@@ -83,6 +127,7 @@ struct KeyCover {
 
     func lockAllChainsAsync() {
         Task {
+            await KeyCover.prepareManagedPassword(retry: true)
             for keychain in KeyCover.shared.listKeychains() where !keychain.chainEncryptionStatus {
                 try? keychain.encryptKeyDB()
             }
@@ -94,6 +139,7 @@ class KeyCoverObservable: ObservableObject {
     static var shared = KeyCoverObservable()
 
     @Published var keyCoverEnabled = KeyCover.shared.isKeyCoverEnabled()
+    @Published var managedPasswordReady = KeyCover.shared.keyCoverPlainTextKey != nil
     @Published var unlockedCount = KeyCover.shared.unlockedCount()
     @Published var keychains = KeyCover.shared.listKeychains()
 
@@ -103,6 +149,7 @@ class KeyCoverObservable: ObservableObject {
 
     func update() {
         keyCoverEnabled = KeyCover.shared.isKeyCoverEnabled()
+        managedPasswordReady = KeyCover.shared.keyCoverPlainTextKey != nil
         unlockedCount = KeyCover.shared.unlockedCount()
         keychains = KeyCover.shared.listKeychains()
     }
@@ -118,6 +165,12 @@ struct KeyCoverKey {
             .appendingPathComponent(appBundleID)
             .appendingPathExtension("db")
     }
+    private var decryptedKeyDBWAL: URL {
+        URL(fileURLWithPath: decryptedKeyDB.path + "-wal")
+    }
+    private var decryptedKeyDBSHM: URL {
+        URL(fileURLWithPath: decryptedKeyDB.path + "-shm")
+    }
     var encryptedKeyDB: URL {
         KeyCover.playChainPath
             .appendingPathComponent(appBundleID)
@@ -130,18 +183,31 @@ struct KeyCoverKey {
 
     func encryptKeyDB() throws {
         if let plainTextKey = KeyCover.shared.keyCoverPlainTextKey {
-            // encrypt the db file
+            guard FileManager.default.fileExists(atPath: decryptedKeyDB.path) else { return }
+            checkpointWALIfPresent()
+
+            let stagedURL = URL(fileURLWithPath: encryptedKeyDB.path + ".tmp")
+            try? FileManager.default.removeItem(at: stagedURL)
             let task = Process()
             task.launchPath = "/usr/bin/openssl"
             task.currentDirectoryPath = KeyCover.playChainPath.path
             task.arguments = ["enc", "-aes-256-cbc", "-A",
                                 "-in", decryptedKeyDB.path,
-                                "-out", encryptedKeyDB.path,
+                                "-out", stagedURL.path,
                                 "-k", plainTextKey]
-            task.launch()
+            try task.run()
             task.waitUntilExit()
+            guard task.terminationStatus == 0 else {
+                try? FileManager.default.removeItem(at: stagedURL)
+                throw CocoaError(.fileWriteUnknown)
+            }
+            if FileManager.default.fileExists(atPath: encryptedKeyDB.path) {
+                _ = try FileManager.default.replaceItemAt(encryptedKeyDB, withItemAt: stagedURL)
+            } else {
+                try FileManager.default.moveItem(at: stagedURL, to: encryptedKeyDB)
+            }
 
-            // delete the key dbs
+            // Delete the decrypted db and its checkpointed WAL/SHM sidecars.
             try deleteKeyDB()
 
             Task { @MainActor in
@@ -152,15 +218,32 @@ struct KeyCoverKey {
 
     func decryptKeyDB() throws {
         if let plainTextKey = KeyCover.shared.keyCoverPlainTextKey {
-            // decrypt the zip file
+            guard FileManager.default.fileExists(atPath: encryptedKeyDB.path) else { return }
+            let hadPlainDB = FileManager.default.fileExists(atPath: decryptedKeyDB.path)
+            let stagedURL = URL(fileURLWithPath: decryptedKeyDB.path + ".tmp")
+            try? FileManager.default.removeItem(at: stagedURL)
+
             let task = Process()
             task.launchPath = "/usr/bin/openssl"
             task.arguments = ["enc", "-aes-256-cbc", "-A", "-d", "-in", encryptedKeyDB.path, "-out",
-                              decryptedKeyDB.path,
+                              stagedURL.path,
                               "-k", plainTextKey]
-            task.launch()
+            try task.run()
             task.waitUntilExit()
-            // delete the encrypted key file
+            guard task.terminationStatus == 0 else {
+                try? FileManager.default.removeItem(at: stagedURL)
+                throw CocoaError(.fileReadUnknown)
+            }
+
+            if !hadPlainDB {
+                try? FileManager.default.removeItem(at: decryptedKeyDBWAL)
+                try? FileManager.default.removeItem(at: decryptedKeyDBSHM)
+                try FileManager.default.moveItem(at: stagedURL, to: decryptedKeyDB)
+            } else {
+                try? FileManager.default.removeItem(at: stagedURL)
+            }
+
+            // Delete the encrypted key file only after decryption succeeds.
             try FileManager.default.removeItem(at: encryptedKeyDB)
 
             Task { @MainActor in
@@ -169,8 +252,19 @@ struct KeyCoverKey {
         }
     }
 
+    private func checkpointWALIfPresent() {
+        guard FileManager.default.fileExists(atPath: decryptedKeyDBWAL.path) else { return }
+        let task = Process()
+        task.launchPath = "/usr/bin/sqlite3"
+        task.arguments = [decryptedKeyDB.path, "PRAGMA busy_timeout=1000; PRAGMA wal_checkpoint(TRUNCATE);"]
+        try? task.run()
+        task.waitUntilExit()
+    }
+
     func deleteKeyDB() throws {
         try FileManager.default.removeItem(at: decryptedKeyDB)
+        try? FileManager.default.removeItem(at: decryptedKeyDBWAL)
+        try? FileManager.default.removeItem(at: decryptedKeyDBSHM)
     }
 
     func deleteEncryptedKeyDB() throws {
@@ -225,6 +319,10 @@ class KeyCoverPassword {
     }
 
     func getKeyCoverPassword() -> String? {
+        readKeyCoverPassword().password
+    }
+
+    fileprivate func readKeyCoverPassword() -> (password: String?, status: OSStatus) {
         // Get the master key from macOS keychain
         let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
                                     kSecAttrService as String: tag,
@@ -236,10 +334,10 @@ class KeyCoverPassword {
         let status = SecItemCopyMatching(query as CFDictionary, &dataTypeRef)
         if status == errSecSuccess {
             if let data = dataTypeRef as? Data {
-                return String(data: data, encoding: .utf8)
+                return (String(data: data, encoding: .utf8), status)
             }
         }
-        return nil
+        return (nil, status)
     }
 
     func removeKeyCoverPassword() {

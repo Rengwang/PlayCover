@@ -431,6 +431,16 @@ struct GraphicsView: View {
                         }
                         .frame(alignment: .leading)
                     }
+                    if #available(macOS 14.0, *), settings.info[string: "NSCameraUsageDescription"] != nil {
+                        Picker("settings.picker.cameraRotation", selection: $settings.settings.cameraRotation) {
+                            Text("settings.picker.cameraRotation.automatic").tag(-1)
+                            Text("settings.picker.cameraRotation.app").tag(-2)
+                            ForEach([0, 90, 180, 270], id: \.self) { angle in
+                                Text(verbatim: "\(angle)°").tag(angle)
+                            }
+                        }
+                        .help("settings.picker.cameraRotation.help")
+                    }
                     Spacer()
                     Toggle("settings.toggle.disableDisplaySleep", isOn: $settings.settings.disableTimeout)
                         .help("settings.toggle.disableDisplaySleep.help")

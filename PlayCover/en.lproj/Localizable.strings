@@ -147,6 +147,9 @@
 "error.waitDownload" = "Please wait for the current download to finish!";
 "error.appEncrypted" = "This app is encrypted! Please use a decrypted IPA. iMazing IPAs are not supported!";
 "error.appCorrupted" = "Something went wrong with this IPA. Please try to use another IPA file.";
+"error.marketplaceKitUnavailable" = "This version requires Apple’s MarketplaceKit framework at startup. The framework is unavailable on this Mac. Use the developer’s macOS app or a build that supports Mac Catalyst.";
+"error.hostDependencyUnavailable" = "%1$@ requires a system library at startup that is unavailable on this Mac: %2$@.";
+"error.appRunningDuringInstall" = "Quit this app before installing a replacement.";
 "error.appProhibited" = "Using this app through PlayCover will likely result in a ban!";
 "error.appMaliciousProhibited" = "This App behaves maliciously on Macs, and using it can leave your device in an unbootable state, therefore it is blocked from PlayCover. (Uninstalling...)";
 "error.failedToStripBinary" = "Could not find ARM64 arch in fat binary!";
@@ -216,6 +219,10 @@
 "settings.toggle.sdkShift" = "SDK Shift (Unlock Free Resizing for Duo)";
 "settings.toggle.nativePlatform" = "Use the native Mac Catalyst platform";
 "settings.toggle.nativePlatform.help" = "Use the system’s Mac Catalyst identity for API availability checks. Restart the app to apply.";
+"settings.picker.cameraRotation" = "Camera rotation";
+"settings.picker.cameraRotation.automatic" = "Automatic";
+"settings.picker.cameraRotation.app" = "Let the app decide";
+"settings.picker.cameraRotation.help" = "Automatic levels compatible Mac camera captures. Set an angle to override the app’s rotation. Restart the app to apply.";
 "settings.toggle.sdkShift.help" = "Inspired by SDKShift for Duo: reports iOS 27.2 SDK metadata to the app at runtime and lifts UIRequiresFullScreen / fixed-aspect scaling locks in Smart Auto-Adapt and Resizable modes so fixed-ratio iPhone apps can resize freely. Restart app to apply.";
 
 "settings.tab.bypasses" = "Bypasses";
@@ -334,6 +341,7 @@
 "keycover.status.chainCount" = "KeyCover Chain Status: ";
 "keycover.status.unlockedCount %@ %@" = "%@ unlocked chains in %@ total";
 "keycover.button.lockAll" = "Lock All Chains";
+"keycover.button.authorize" = "Unlock KeyCover";
 "keycover.button.changePassword" = "Change Master Password";
 "keycover.toggle.startupPrompt" = "Prompt for KeyCover at startup";
 "keycover.toggle.startupPrompt.help" = "KeyCover will prompt for your master password when you launch the application. If this is disabled, it will be prompted when you launch an app that uses PlayChain.";

@@ -201,6 +201,9 @@
 "alert.moveAppToApplications.subtitle" = "PlayCover必须在应用程序文件夹下才能正常运行。点击下方按钮将会自动移动PlayCover至应用程序文件夹。";
 "error.appEncrypted" = "此应用已被加密！请使用未加密的 ipa 文件。 现已不再支持来自 iMazing 的 ipa！";
 "error.appCorrupted" = "此 ipa 文件是错误的。请尝试使用其他 ipa 文件。";
+"error.marketplaceKitUnavailable" = "此版本启动时需要 Apple 的 MarketplaceKit 框架，当前 Mac 无法提供该框架。请使用开发者提供的 macOS 版本，或支持 Mac Catalyst 的构建。";
+"error.hostDependencyUnavailable" = "「%1$@」启动时需要以下系统库，但当前 Mac 无法提供：%2$@。";
+"error.appRunningDuringInstall" = "请先退出正在运行的应用，再安装替换版本。";
 "settings.tab.info" = "详细信息";
 "settings.tab.km" = "键盘映射";
 "settings.toggle.km.help" = "为仅支持触摸游戏添加键盘支持，使用 Command + K 打开编辑菜单。";
@@ -358,6 +361,10 @@
 "settings.toggle.sdkShift" = "SDK Shift（强制解锁自由自适应缩放）";
 "settings.toggle.nativePlatform" = "使用原生 Mac Catalyst 平台";
 "settings.toggle.nativePlatform.help" = "让应用使用系统真实的 Mac Catalyst 平台身份判断 API 是否可用。重启应用后生效。";
+"settings.picker.cameraRotation" = "相机方向";
+"settings.picker.cameraRotation.automatic" = "自动校正";
+"settings.picker.cameraRotation.app" = "由应用控制";
+"settings.picker.cameraRotation.help" = "自动校正适用的 Mac 相机画面，也可指定旋转角度。重启应用后生效。";
 "settings.toggle.sdkShift.help" = "参考 SDKShift for Duo 思路：运行时向应用提供高版本 Duo SDK（iOS 27.2）标识并解除全屏/单向锁定，使原本固定比例的应用窗口可自由调节大小（在智能自适应/自由调整模式下生效，重启应用生效）。";
 "settings.usageMode" = "运行模式";
 "settings.usageMode.app" = "低功耗应用模式";
@@ -382,6 +389,7 @@
 "keycover.status.chainCount" = "KeyCover链状态: ";
 "keycover.status.unlockedCount %@ %@" = "%@ 总共解锁了 %@ 条链";
 "keycover.button.lockAll" = "锁定所有链";
+"keycover.button.authorize" = "解锁 KeyCover";
 "keycover.button.changePassword" = "更改主密码";
 "keycover.toggle.startupPrompt" = "启动时提示KeyCover";
 "keycover.toggle.startupPrompt.help" = "当您启动应用程序时，KeyCover将提示您输入主密码。如果禁用此选项，则当您启动使用PlayChain的应用程序时，系统会提示您。";

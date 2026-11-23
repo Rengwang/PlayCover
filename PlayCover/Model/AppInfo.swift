@@ -233,6 +233,27 @@ public class AppInfo {
         }
     }
 
+    /// Only change the framework path when it is empty or points to our managed runtime.
+    func updateManagedFrameworkPath(_ path: String, enabled: Bool) throws -> Bool {
+        let key = "DYLD_FRAMEWORK_PATH"
+        let original = rawStorage["LSEnvironment"]
+        var environment = original as? [String: String] ?? [:]
+        if original != nil && original as? [String: String] == nil { return false }
+        guard environment[key] == nil || environment[key] == path else { return false }
+        let replacement = enabled ? path : nil
+        guard environment[key] != replacement else { return false }
+
+        environment[key] = replacement
+        rawStorage["LSEnvironment"] = environment.isEmpty ? nil : NSMutableDictionary(dictionary: environment)
+        do {
+            try write()
+            return true
+        } catch {
+            rawStorage["LSEnvironment"] = original
+            throw error
+        }
+    }
+
     func assert(minimumVersion: Double) {
         if let double = Double(minimumOSVersion) {
             if double > 11.0 {
@@ -243,6 +264,37 @@ public class AppInfo {
 }
 
 extension AppInfo {
+    func enableMacResizingForLegacyPortraitApp(resign: (() throws -> Void)? = nil) throws {
+        let phoneOrientations = self[strings: "UISupportedInterfaceOrientations~iphone"]
+            ?? self[strings: "UISupportedInterfaceOrientations"]
+        guard #available(macOS 27.0, *),
+              deviceFamilies.contains(1), supportsIPad, requiresFullScreen,
+              phoneOrientations == ["UIInterfaceOrientationPortrait"],
+              rawStorage["UISupportedInterfaceOrientations~ipad"] == nil,
+              rawStorage["UIApplicationSceneManifest"] == nil else { return }
+
+        let originalData = try Data(contentsOf: url)
+        let updated = retargeted(toURL: url)
+        // macOS uses the iPad multitasking declarations to allow window resizing.
+        // Keep PlayTools' fixed portrait canvas for apps with this legacy layout.
+        updated.rawStorage.removeObject(forKey: "UIRequiresFullScreen")
+        updated[strings: "UISupportedInterfaceOrientations~ipad"] = [
+            "UIInterfaceOrientationPortrait",
+            "UIInterfaceOrientationPortraitUpsideDown",
+            "UIInterfaceOrientationLandscapeLeft",
+            "UIInterfaceOrientationLandscapeRight"
+        ]
+        updated[bool: "PlayCoverPrefersScaledWindow"] = true
+        try updated.write()
+        do {
+            try resign?()
+        } catch {
+            try originalData.write(to: url, options: .atomic)
+            throw error
+        }
+        rawStorage = updated.rawStorage
+    }
+
     var deviceFamilies: [Int] {
         if let ints = self[ints: "UIDeviceFamily"], !ints.isEmpty {
             return ints
@@ -301,6 +353,7 @@ extension AppInfo {
         if forceSDKShift {
             return true
         }
+        guard self[bool: "PlayCoverPrefersScaledWindow"] != true else { return false }
         let orientations = supportedOrientations
         let hasPortrait = orientations.contains { $0.contains("Portrait") }
         let hasLandscape = orientations.contains { $0.contains("Landscape") }
