@@ -1,0 +1,194 @@
+{
+  "date": "2026-11-23",
+  "hardware": "Apple M5",
+  "os": "macOS 27.2.1 (26B131)",
+  "windowPoints": [
+    810,
+    720
+  ],
+  "measurementSeconds": 20,
+  "caveats": [
+    "Energy is a per-process OS estimate, not an isolated CPU/GPU rail measurement.",
+    "Foreground samples that lost focus are excluded from foreground comparisons.",
+    "Window appearance does not measure network/content readiness or launcher preparation.",
+    "App versions match, but layout identity, caches and content can differ."
+  ],
+  "apps": {
+    "uptimer": {
+      "version": "0.17.02",
+      "build": "230002450"
+    },
+    "coolapk": {
+      "version": "16.7.3",
+      "build": "2611121"
+    }
+  },
+  "hiddenSamples": [
+    {
+      "case": "coolapk-playcover",
+      "cpuPercentOneCore": 0.0393,
+      "footprintMiB": 153.26708984375,
+      "attributedMilliwatts": 8.9107,
+      "interruptWakeupsPerSecond": 29.142619631578306,
+      "hiddenBefore": true,
+      "hiddenAfter": true
+    },
+    {
+      "case": "coolapk-store",
+      "cpuPercentOneCore": 0.0419,
+      "footprintMiB": 102.75128173828125,
+      "attributedMilliwatts": 18.5145,
+      "interruptWakeupsPerSecond": 26.693255948884513,
+      "hiddenBefore": true,
+      "hiddenAfter": true
+    },
+    {
+      "case": "uptimer-playcover",
+      "cpuPercentOneCore": 0.0028,
+      "footprintMiB": 134.17308807373047,
+      "attributedMilliwatts": 0.316,
+      "interruptWakeupsPerSecond": 2.5998223021456486,
+      "hiddenBefore": true,
+      "hiddenAfter": true
+    },
+    {
+      "case": "uptimer-store",
+      "cpuPercentOneCore": 0.003,
+      "footprintMiB": 125.28227996826172,
+      "attributedMilliwatts": 0.3004,
+      "interruptWakeupsPerSecond": 2.3993930735220528,
+      "hiddenBefore": true,
+      "hiddenAfter": true
+    },
+    {
+      "case": "uptimer-catalyst-unhooked",
+      "cpuPercentOneCore": 0.0019,
+      "footprintMiB": 143.11058807373047,
+      "attributedMilliwatts": 0.0734,
+      "interruptWakeupsPerSecond": 2.4993682846660508,
+      "hiddenBefore": true,
+      "hiddenAfter": true
+    },
+    {
+      "case": "playcover-host",
+      "cpuPercentOneCore": 0.0001,
+      "footprintMiB": 48.68852996826172,
+      "attributedMilliwatts": 0.0073,
+      "interruptWakeupsPerSecond": 0.0999772001994945,
+      "hiddenBefore": true,
+      "hiddenAfter": true
+    }
+  ],
+  "validation": {
+    "installedSigningMetadataMatchesCodesign": 69,
+    "hostDiscoveryApps": 69,
+    "hostImages": 1353,
+    "mandatoryGraphApps": 69,
+    "unresolvedMandatoryLibraryPaths": 0,
+    "graphFixtures": 6,
+    "fatChecks": 14,
+    "coreRuntimeChecks": 37,
+    "idleSwipeObjectsRetainedBefore": 1000,
+    "idleSwipeObjectsRetainedAfter": 0,
+    "thumbstickBackgroundDispatchesAfter": 0,
+    "thumbstickResumed": true,
+    "aliasReuseAndResourceRepair": true,
+    "realAppWindowSmoke": [
+      {
+        "id": "com.openai.chat",
+        "version": "1.2026.315",
+        "build": "44630987794",
+        "observationSeconds": 8,
+        "allWindowsOnTarget": true,
+        "aliveAfterObservation": true,
+        "normalQuit": true,
+        "matchingCrashReports": 0
+      },
+      {
+        "id": "com.forestapp.Forest",
+        "version": "5.35.0",
+        "build": "6593651.8278588887",
+        "observationSeconds": 8,
+        "allWindowsOnTarget": true,
+        "aliveAfterObservation": true,
+        "normalQuit": true,
+        "matchingCrashReports": 0
+      },
+      {
+        "id": "com.zhang333.dd",
+        "version": "2.6.0",
+        "build": "1",
+        "observationSeconds": 8,
+        "allWindowsOnTarget": true,
+        "aliveAfterObservation": true,
+        "normalQuit": true,
+        "matchingCrashReports": 0
+      },
+      {
+        "id": "cn.12306.rails12306",
+        "version": "5.9.6",
+        "build": "22",
+        "observationSeconds": 8,
+        "allWindowsOnTarget": true,
+        "aliveAfterObservation": true,
+        "normalQuit": true,
+        "matchingCrashReports": 0
+      },
+      {
+        "id": "com.hnair.mobile",
+        "version": "10.20.3",
+        "build": "26776",
+        "observationSeconds": 8,
+        "allWindowsOnTarget": true,
+        "aliveAfterObservation": true,
+        "normalQuit": true,
+        "matchingCrashReports": 0
+      },
+      {
+        "id": "com.travelsky.umetrip",
+        "version": "8.6.8",
+        "build": "2",
+        "observationSeconds": 125,
+        "allWindowsOnTarget": true,
+        "aliveAfterObservation": true,
+        "normalQuit": true,
+        "matchingCrashReports": 0
+      }
+    ],
+    "singleThumbstickWorkerAfter1000ConcurrentCallbacks": true
+  },
+  "restrictInspection": {
+    "samples": 8,
+    "baselineMaxRSSMiB": 316.8125,
+    "finalMaxRSSMiB": 5.828125,
+    "baselineMilliseconds": [
+      18.929750003735535,
+      18.934583335067146,
+      19.05383332632482,
+      19.05441666895058,
+      19.086875006905757,
+      19.453708329820074,
+      25.7115416607121,
+      80.2597499859985
+    ],
+    "finalMilliseconds": [
+      0.07033333531580865,
+      0.0707916624378413,
+      0.07125000411178917,
+      0.07779165753163397,
+      0.07837500015739352,
+      0.08191665983758867,
+      0.1176249934360385,
+      0.618249992839992
+    ],
+    "baselineMedianMilliseconds": 19.07064583792817,
+    "finalMedianMilliseconds": 0.07808332884451374
+  },
+  "gpu": {
+    "perProcessGPUFieldsAvailable": false,
+    "metalTraceSeconds": 5,
+    "fixtureMetalEncodersObserved": 0,
+    "perApplicationGPUWattsEstablished": false
+  },
+  "measurementRevisionNote": "After power sampling, alias resource validation and thumbstick queue serialization received additional regression checks. The compared apps have keymapping disabled."
+}

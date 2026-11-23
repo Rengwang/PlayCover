@@ -7,6 +7,7 @@
 import Cocoa
 import Foundation
 import IOKit.pwr_mgt
+import Security
 
 class PlayApp: BaseApp {
     // MARK: - Static
@@ -138,10 +139,8 @@ class PlayApp: BaseApp {
                 if settings.openWithLLDB {
                     try Shell.lldb(executable, withTerminalWindow: settings.openLLDBWithTerminal)
                 } else {
-                    // The bundle may have been modified and re-signed above, so rebuild the
-                    // alias to keep its Info.plist copy in sync with the sealed bundle
-                    removeAlias()
-                    createAlias()
+                    // Refresh the copied Info.plist only when its source changed.
+                    ensureAliasIfNeeded()
                     loadDiscordIPC()
 
                     runAppExec() // Splitting to reduce complexity
@@ -164,6 +163,10 @@ class PlayApp: BaseApp {
         let cachedFingerprintMatches = !cachedFingerprint.isEmpty
             && cachedFingerprint == machoScanFingerprint(for: machos)
         let scanNeeded = cachedVersion != Macho.trapSchemaVersion || !cachedFingerprintMatches
+
+        // Every binary's path, size and modification date was checked above. An unchanged
+        // successful scan needs no second pass over Mach-O headers or signature pages.
+        guard scanNeeded else { return false }
 
         var needsBundleResign = false
         var convertedAny = false
@@ -550,7 +553,10 @@ extension PlayApp {
     }
 
     func isInfoPlistSigned() throws -> Bool {
-        try Shell.run("/usr/bin/codesign", "-dv", executable.path).contains("Info.plist entries")
+        if let information = Entitlements.signingInformation(exec: executable) {
+            return information[kSecCodeInfoPList as String] != nil
+        }
+        return try Shell.run("/usr/bin/codesign", "-dv", executable.path).contains("Info.plist entries")
     }
 
     func showInFinder() {

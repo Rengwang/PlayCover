@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import Security
 import Yams
 
 class Entitlements {
@@ -33,14 +34,29 @@ class Entitlements {
     }
 
     static func dumpEntitlements(exec: URL) throws -> [String: Any] {
+        if let information = signingInformation(exec: exec) {
+            return information[kSecCodeInfoEntitlementsDict as String] as? [String: Any] ?? [:]
+        }
         let result = try [String: Any].read(try copyEntitlements(exec: exec))
         return result ?? [:]
+    }
+
+    /// Read signing metadata in-process instead of spawning codesign for every launch.
+    /// This is an inspection, not a substitute for the install/resource-seal validity check.
+    static func signingInformation(exec: URL) -> [String: Any]? {
+        var code: SecStaticCode?
+        guard SecStaticCodeCreateWithPath(exec as CFURL, [], &code) == errSecSuccess,
+              let code else { return nil }
+        var information: CFDictionary?
+        guard SecCodeCopySigningInformation(code, SecCSFlags(rawValue: kSecCSSigningInformation),
+                                           &information) == errSecSuccess else { return nil }
+        return information as? [String: Any]
     }
 
     static func areEntitlementsValid(app: PlayApp) throws -> Bool {
         guard let old = try dumpEntitlements(exec: app.executable) as? [String: AnyHashable] else { return false }
         guard let new = try composeEntitlements(app) as? [String: AnyHashable] else { return false }
-        return new.hashValue == old.hashValue
+        return new == old
     }
 
     private static func setBaseEntitlements(_ base: inout [String: Any]) {

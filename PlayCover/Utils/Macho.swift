@@ -318,9 +318,28 @@ class Macho {
 
     private static func startupLinks(at image: URL) throws
         -> (required: [String], optional: [String], runPaths: [String]) {
-        var binary = try Data(contentsOf: image, options: .mappedIfSafe)
-        try stripBinary(&binary)
-        return try startupLinks(in: binary)
+        // Startup graph traversal only needs load commands, not __TEXT/__LINKEDIT.
+        // In particular, do not copy a whole arm64 slice out of a universal binary.
+        let handle = try FileHandle(forReadingFrom: image)
+        defer { try? handle.close() }
+        let slice = try selectedArm64Slice(in: handle)
+        let headerSize = MemoryLayout<mach_header_64>.size
+        guard slice.count >= headerSize else { throw PlayCoverError.appCorrupted }
+        try handle.seek(toOffset: slice.lowerBound)
+        guard let data = try handle.read(upToCount: headerSize), data.count == headerSize else {
+            throw PlayCoverError.appCorrupted
+        }
+        var header = data.extract(mach_header_64.self)
+        guard header.magic == MH_MAGIC_64 || header.magic == MH_CIGAM_64 else {
+            throw PlayCoverError.appCorrupted
+        }
+        if header.magic == MH_CIGAM_64 { swap_mach_header_64(&header, NXHostByteOrder()) }
+        guard UInt64(header.sizeofcmds) <= slice.upperBound - slice.lowerBound - UInt64(headerSize) else {
+            throw PlayCoverError.appCorrupted
+        }
+        guard let commands = try handle.read(upToCount: Int(header.sizeofcmds)),
+              commands.count == Int(header.sizeofcmds) else { throw PlayCoverError.appCorrupted }
+        return try startupLinks(in: data + commands)
     }
 
     private static func startupLinks(in binary: Data) throws
@@ -564,7 +583,7 @@ class Macho {
         let sdk = UInt32(major) << 16 | UInt32(minor) << 8 | UInt32(patch)
         guard sdk >= modernUIKitSDK else { return false }
 
-        var binary = try Data(contentsOf: executable)
+        var binary = try Data(contentsOf: executable, options: .mappedIfSafe)
         var replacement: (offset: Int, bytes: Data)?
         _ = try iterateLoadCommands(binary: binary) { offset, shouldSwap in
             let load = binary.extract(load_command.self, offset: offset, swap: shouldSwap ? swap_load_command : nil)
@@ -580,6 +599,8 @@ class Macho {
             return true
         }
         guard let replacement else { return false }
+        // A mapped NSData can expose read-only pages even through mutating Data APIs.
+        binary = binary.withUnsafeBytes { Data(bytes: $0.baseAddress!, count: $0.count) }
         binary.replaceSubrange(replacement.offset..<(replacement.offset + replacement.bytes.count),
                                with: replacement.bytes)
         let permissions = try FileManager.default.attributesOfItem(atPath: executable.path)[.posixPermissions]
@@ -716,7 +737,7 @@ class Macho {
         }
 
         let allCommandsEnd = headerSize + Int(header.sizeofcmds)
-        if allCommandsEnd >= binary.count || allCommandsEnd <= headerSize {
+        if allCommandsEnd > binary.count || allCommandsEnd <= headerSize {
             print("Cannot iterate load commands: Mach-O file is corrupted(-1)")
             throw PlayCoverError.appCorrupted
         }
@@ -806,28 +827,40 @@ extension Macho {
 
     @discardableResult
     static func stripRestrictSegment(atURL macho: URL) throws -> Bool {
-        var binary = try Data(contentsOf: macho)
-        let modified = try stripRestrictSegment(&binary)
-        if modified {
-            try binary.write(to: macho)
+        // Almost every warm launch is a no-op. Inspect mapped header pages instead of
+        // allocating and reading hundreds of MB of executable code into the launcher.
+        var binary = try Data(contentsOf: macho, options: .mappedIfSafe)
+        guard try stripRestrictSegment(&binary, applyChanges: false) else { return false }
+        // Inspection never mutates mapped pages. Only the rare repair needs an owned copy.
+        binary = binary.withUnsafeBytes { Data(bytes: $0.baseAddress!, count: $0.count) }
+        guard try stripRestrictSegment(&binary) else { return false }
+        let permissions = try FileManager.default.attributesOfItem(atPath: macho.path)[.posixPermissions]
+        try binary.write(to: macho, options: .atomic)
+        if let permissions {
+            try FileManager.default.setAttributes([.posixPermissions: permissions], ofItemAtPath: macho.path)
         }
-        return modified
+        return true
     }
 
     /// Renames any `__RESTRICT` / `__restrict` segment and section names in-place so macOS
     /// dyld permits `@rpath` expansion and `DYLD_INSERT_LIBRARIES` on ad-hoc signed apps.
     @discardableResult
     static func stripRestrictSegment(_ binary: inout Data) throws -> Bool {
+        try stripRestrictSegment(&binary, applyChanges: true)
+    }
+
+    private static func stripRestrictSegment(_ binary: inout Data, applyChanges: Bool) throws -> Bool {
         guard binary.count >= MemoryLayout<UInt32>.size else { return false }
 
         let magic = binary.extract(UInt32.self)
         if magic == FAT_MAGIC || magic == FAT_CIGAM {
-            return try stripRestrictSegmentInFat(&binary)
+            return try stripRestrictSegmentInFat(&binary, applyChanges: applyChanges)
         }
-        return try stripRestrictSegmentInSlice(&binary, sliceStart: 0, sliceEnd: binary.count)
+        return try stripRestrictSegmentInSlice(&binary, sliceStart: 0, sliceEnd: binary.count,
+                                             applyChanges: applyChanges)
     }
 
-    private static func stripRestrictSegmentInFat(_ binary: inout Data) throws -> Bool {
+    private static func stripRestrictSegmentInFat(_ binary: inout Data, applyChanges: Bool) throws -> Bool {
         var header = binary.extract(fat_header.self)
         let shouldSwap = header.magic == FAT_CIGAM
         if shouldSwap { swap_fat_header(&header, NXHostByteOrder()) }
@@ -841,7 +874,8 @@ extension Macho {
             let sliceStart = Int(arch.offset)
             let sliceEnd = sliceStart + Int(arch.size)
             if sliceStart >= 0 && sliceEnd <= binary.count && sliceStart < sliceEnd,
-               try stripRestrictSegmentInSlice(&binary, sliceStart: sliceStart, sliceEnd: sliceEnd) {
+               try stripRestrictSegmentInSlice(&binary, sliceStart: sliceStart, sliceEnd: sliceEnd,
+                                              applyChanges: applyChanges) {
                 modified = true
             }
             offset += MemoryLayout<fat_arch>.size
@@ -850,7 +884,7 @@ extension Macho {
     }
 
     private static func stripRestrictSegmentInSlice(
-        _ binary: inout Data, sliceStart: Int, sliceEnd: Int
+        _ binary: inout Data, sliceStart: Int, sliceEnd: Int, applyChanges: Bool
     ) throws -> Bool {
         let headerSize = MemoryLayout<mach_header_64>.size
         guard sliceEnd - sliceStart >= headerSize else { return false }
@@ -871,6 +905,7 @@ extension Macho {
             if loadCommand.cmd == UInt32(LC_SEGMENT_64),
                offset + MemoryLayout<segment_command_64>.size <= commandEnd,
                binary[(offset + 8)..<(offset + 24)] == restrictSegBytes {
+                if !applyChanges { return true }
                 binary.replaceSubrange((offset + 8)..<(offset + 24), with: replacementSegBytes)
                 let seg = binary.extract(segment_command_64.self, offset: offset,
                                          swap: shouldSwap ? swap_segment_command_64 : nil)

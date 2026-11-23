@@ -108,12 +108,25 @@ extension PlayApp {
             let resolvedDest = URL(fileURLWithPath: execDest, relativeTo: aliasURL)
                 .standardizedFileURL.path
             if resolvedDest == srcExec.standardizedFileURL.path,
-               fileManager.fileExists(atPath: aliasExec.path) {
+               fileManager.fileExists(atPath: aliasExec.path), aliasEntriesMatchSource() {
                 return
             }
         }
 
         removeAlias()
         createAlias()
+    }
+
+    private func aliasEntriesMatchSource() -> Bool {
+        let manager = FileManager.default
+        guard let sourceNames = try? manager.contentsOfDirectory(atPath: url.path),
+              let aliasNames = try? manager.contentsOfDirectory(atPath: aliasURL.path),
+              Set(sourceNames) == Set(aliasNames) else { return false }
+        return sourceNames.filter { $0 != "Info.plist" }.allSatisfy { name in
+            let item = aliasURL.appendingPathComponent(name)
+            guard let destination = try? manager.destinationOfSymbolicLink(atPath: item.path) else { return false }
+            return URL(fileURLWithPath: destination, relativeTo: aliasURL).standardizedFileURL.path
+                == url.appendingPathComponent(name).standardizedFileURL.path
+        }
     }
 }

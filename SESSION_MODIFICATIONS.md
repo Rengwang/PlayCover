@@ -84,3 +84,9 @@ SWIFT_ACTIVE_COMPILATION_CONDITIONS = $(inherited) PLAYTOOLS_FRAMEWORK_PROBES
 | 功耗 | UpTimer 在相同 810 × 720 窗口下，两组 15 秒空闲样本的平均进程归因功耗为 2.93 → 3.88 mW。延长稳定时间后，30 秒对照为 2.55 → 2.51 mW，未复现短样本升幅。长期运行和整机功耗待测。 |
 
 详细报告保存在本机诊断目录。发布或表述某个应用已兼容时，应以对应版本和具体场景的复测为准。
+
+## 2026-11-23 资源与启动核查
+
+[性能与兼容性核查](PERFORMANCE_REVIEW.md) 记录同版本 App Store / PlayCover 对照、GPU 归因限制和本轮验证。启动检查采用按需映射、指纹复用和进程内签名元数据查询；启动别名同时校验顶层资源，不再等待 IPA 源网络刷新。PlayTools 在失焦后释放映射触摸、停止手柄辅助轮询，并修复滑动计时器的对象保留问题。
+
+最终 Release 已构建安装，核心自检与实际应用窗口冒烟通过，完整业务流程和实体手柄仍有未验证范围。维护分支沿用 `develop` / `master`，另保留 `codex/performance-compatibility-20261123` 快照。复测工具与可公开的数字位于 [Tools/Performance](Tools/Performance/README.md)。

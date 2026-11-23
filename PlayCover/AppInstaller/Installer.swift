@@ -218,7 +218,6 @@ class Installer {
 
         var resolved: [URL] = []
         var seen: Set<URL> = []
-        let serialQueue = DispatchQueue(label: "baseAppUrlResolver")
 
         let executableURL = baseApp.executable
         if let execAttrs = try? executableURL.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
@@ -230,27 +229,30 @@ class Installer {
             resolved.append(executableURL)
         }
 
-        baseApp.url.enumerateContents(descendingIntoPackages: ["framework"]) { url, attributes in
-            guard attributes.isRegularFile == true, let fileSize = attributes.fileSize, fileSize > 4 else {
-                return
-            }
-
-            if nonMachOExtensions.contains(url.pathExtension.lowercased()) {
-                return
-            }
-
-            guard isValidMachOFile(url) else {
-                return
-            }
-
-            serialQueue.sync {
-                let standardized = url.standardizedFileURL
-                if seen.insert(standardized).inserted {
-                    resolved.append(url)
+        // Metadata enumeration is cheap local I/O. Scheduling an Operation for every
+        // asset and serializing results added thousands of tasks to otherwise warm launches.
+        // Keep the same package boundaries: frameworks belong to the host, app extensions
+        // and component bundles retain their independent platform and signing identity.
+        let keys: Set<URLResourceKey> = [.isRegularFileKey, .fileSizeKey, .isDirectoryKey, .isPackageKey]
+        if let enumerator = FileManager.default.enumerator(at: baseApp.url,
+                                                           includingPropertiesForKeys: Array(keys),
+                                                           options: [.skipsHiddenFiles]) {
+            for case let url as URL in enumerator {
+                let ext = url.pathExtension.lowercased()
+                // Directory URLs from FileManager carry the directory bit. Skip obvious
+                // resource files before asking Foundation to bridge their full metadata.
+                if !url.hasDirectoryPath, nonMachOExtensions.contains(ext) { continue }
+                guard let attributes = try? url.resourceValues(forKeys: keys) else { continue }
+                if attributes.isDirectory == true,
+                   attributes.isPackage == true || ["appex", "bundle"].contains(ext), ext != "framework" {
+                    enumerator.skipDescendants()
                 }
+                guard attributes.isRegularFile == true, let size = attributes.fileSize, size > 4,
+                      !nonMachOExtensions.contains(ext), isValidMachOFile(url) else { continue }
+                if seen.insert(url.standardizedFileURL).inserted { resolved.append(url) }
             }
         }
-
+        baseApp.validMachOs = resolved
         return resolved
     }
 
