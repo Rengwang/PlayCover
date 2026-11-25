@@ -275,7 +275,6 @@ struct GraphicsView: View {
     @State var customWidth = 1920
     @State var customHeight = 1080
     @State var showResolutionWarning = false
-    @State private var showAdvanced = false
     @AppStorage("settings.settings.inverseScreenValues") private var inverseScreenValues = false
     @AppStorage("settings.settings.disableTimeout") private var disableTimeout = false
     @AppStorage("settings.toggle.hideTitleBar") private var hideTitleBar = false
@@ -492,56 +491,51 @@ struct GraphicsView: View {
                     Toggle("settings.toggle.hideTitleBar", isOn: $settings.settings.hideTitleBar)
                     Toggle("settings.toggle.disableDisplaySleep", isOn: $settings.settings.disableTimeout)
                         .help("settings.toggle.disableDisplaySleep.help")
-                    DisclosureGroup("settings.section.advanced", isExpanded: $showAdvanced) {
-                        VStack(alignment: .leading, spacing: 8) {
-                            if #available(macOS 13.2, *), !isDynamicWindowMode {
-                                HStack {
-                                    Toggle("settings.picker.windowFix", isOn: $settings.settings.inverseScreenValues)
-                                        .help("settings.picker.windowFix.help")
-                                        .onChange(of: settings.settings.inverseScreenValues) { _ in
-                                            settings.settings.windowFixMethod = 0
-                                        }
-                                    Spacer()
-                                    Picker("", selection: $settings.settings.windowFixMethod) {
-                                        Text("settings.picker.windowFixMethod.0").tag(0)
-                                        Text("settings.picker.windowFixMethod.1").tag(1)
-                                    }
-                                    .frame(alignment: .leading)
-                                    .help("settings.picker.windowFixMethod.help")
-                                    .disabled(!settings.settings.inverseScreenValues)
+                    if #available(macOS 13.2, *), !isDynamicWindowMode {
+                        HStack {
+                            Toggle("settings.picker.windowFix", isOn: $settings.settings.inverseScreenValues)
+                                .help("settings.picker.windowFix.help")
+                                .onChange(of: settings.settings.inverseScreenValues) { _ in
+                                    settings.settings.windowFixMethod = 0
                                 }
+                            Spacer()
+                            Picker("", selection: $settings.settings.windowFixMethod) {
+                                Text("settings.picker.windowFixMethod.0").tag(0)
+                                Text("settings.picker.windowFixMethod.1").tag(1)
                             }
-                            HStack {
-                                Text("settings.settings.displayRotation")
-                                Spacer()
-                                Picker("", selection: $settings.settings.displayRotation) {
-                                    Text("settings.settings.displayRotation.default").tag(0)
-                                    Text("settings.settings.displayRotation.portrait").tag(1)
-                                    Text("settings.settings.displayRotation.landscapeRight").tag(2)
-                                    Text("settings.settings.displayRotation.portraitUpsideDown").tag(3)
-                                    Text("settings.settings.displayRotation.flipFix").tag(4)
-                                }
-                                .frame(alignment: .leading)
-                            }
-                            if #available(macOS 14.0, *),
-                               settings.info[string: "NSCameraUsageDescription"] != nil {
-                                Picker("settings.picker.cameraRotation", selection: $settings.settings.cameraRotation) {
-                                    Text("settings.picker.cameraRotation.automatic").tag(-1)
-                                    Text("settings.picker.cameraRotation.app").tag(-2)
-                                    ForEach([0, 90, 180, 270], id: \.self) { angle in
-                                        Text(verbatim: "\(angle)°").tag(angle)
-                                    }
-                                }
-                                .help("settings.picker.cameraRotation.help")
-                            }
-                            Toggle("settings.toggle.sdkShift", isOn: $settings.settings.sdkShift)
-                                .help("settings.toggle.sdkShift.help")
-                                .disabled(!isDynamicWindowMode)
-                            Toggle("settings.toggle.nativePlatform", isOn: $settings.settings.useNativePlatform)
-                                .help("settings.toggle.nativePlatform.help")
+                            .frame(alignment: .leading)
+                            .help("settings.picker.windowFixMethod.help")
+                            .disabled(!settings.settings.inverseScreenValues)
                         }
-                        .padding(.top, 6)
                     }
+                    HStack {
+                        Text("settings.settings.displayRotation")
+                        Spacer()
+                        Picker("", selection: $settings.settings.displayRotation) {
+                            Text("settings.settings.displayRotation.default").tag(0)
+                            Text("settings.settings.displayRotation.portrait").tag(1)
+                            Text("settings.settings.displayRotation.landscapeRight").tag(2)
+                            Text("settings.settings.displayRotation.portraitUpsideDown").tag(3)
+                            Text("settings.settings.displayRotation.flipFix").tag(4)
+                        }
+                        .frame(alignment: .leading)
+                    }
+                    if #available(macOS 14.0, *),
+                       settings.info[string: "NSCameraUsageDescription"] != nil {
+                        Picker("settings.picker.cameraRotation", selection: $settings.settings.cameraRotation) {
+                            Text("settings.picker.cameraRotation.automatic").tag(-1)
+                            Text("settings.picker.cameraRotation.app").tag(-2)
+                            ForEach([0, 90, 180, 270], id: \.self) { angle in
+                                Text(verbatim: "\(angle)°").tag(angle)
+                            }
+                        }
+                        .help("settings.picker.cameraRotation.help")
+                    }
+                    Toggle("settings.toggle.sdkShift", isOn: $settings.settings.sdkShift)
+                        .help("settings.toggle.sdkShift.help")
+                        .disabled(!isDynamicWindowMode)
+                    Toggle("settings.toggle.nativePlatform", isOn: $settings.settings.useNativePlatform)
+                        .help("settings.toggle.nativePlatform.help")
                 }
                 Spacer()
             }
@@ -675,7 +669,6 @@ struct BypassesView: View {
     @AppStorage("settings.settings.bypass") private var bypass = false
     @State private var hasIntrospection: Bool
     @State private var hasIosFrameworks: Bool
-    @State private var showAdvanced = false
 
     var app: PlayApp
 
@@ -707,23 +700,18 @@ struct BypassesView: View {
                         .help("settings.toggle.jbBypass.help")
                     Spacer()
                 }
-                DisclosureGroup("settings.section.advanced", isExpanded: $showAdvanced) {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Toggle("settings.playChain.debugging", isOn: $settings.settings.playChainDebugging)
-                            .disabled(!(hasPlayTools ?? true) || !settings.settings.playChain)
-                        Toggle("settings.toggle.introspection", isOn: $hasIntrospection)
-                            .help("settings.toggle.introspection.help")
-                            .toggleStyle(.async($task, role: .introspection))
-                        Toggle("settings.toggle.iosFrameworks", isOn: $hasIosFrameworks)
-                            .help("settings.toggle.iosFrameworks.help")
-                            .toggleStyle(.async($task, role: .iosFrameworks))
-                        Toggle("settings.toggle.checkMicPermissionSync", isOn: $settings.settings.checkMicPermissionSync)
-                            .help("settings.toggle.checkMicPermissionSync.help")
-                        Toggle("settings.toggle.blockSleepSpamming", isOn: $settings.settings.blockSleepSpamming)
-                            .help("settings.toggle.blockSleepSpamming.help")
-                    }
-                    .padding(.top, 6)
-                }
+                Toggle("settings.playChain.debugging", isOn: $settings.settings.playChainDebugging)
+                    .disabled(!(hasPlayTools ?? true) || !settings.settings.playChain)
+                Toggle("settings.toggle.introspection", isOn: $hasIntrospection)
+                    .help("settings.toggle.introspection.help")
+                    .toggleStyle(.async($task, role: .introspection))
+                Toggle("settings.toggle.iosFrameworks", isOn: $hasIosFrameworks)
+                    .help("settings.toggle.iosFrameworks.help")
+                    .toggleStyle(.async($task, role: .iosFrameworks))
+                Toggle("settings.toggle.checkMicPermissionSync", isOn: $settings.settings.checkMicPermissionSync)
+                    .help("settings.toggle.checkMicPermissionSync.help")
+                Toggle("settings.toggle.blockSleepSpamming", isOn: $settings.settings.blockSleepSpamming)
+                    .help("settings.toggle.blockSleepSpamming.help")
             }
             .padding()
         }
@@ -754,7 +742,6 @@ struct MiscView: View {
     @State var showPopover = false
     @State private var userDylibs: [URL] = []
     @State private var showCustomPluginWarning = false
-    @State private var showAdvanced = false
     var app: PlayApp
     @State var applicationCategoryType: LSApplicationCategoryType
 
@@ -855,111 +842,115 @@ struct MiscView: View {
                         .help(!isVenturaGreater() ? "settings.unavailable.hud" : "")
                     Spacer()
                 }
-                DisclosureGroup("settings.section.advanced", isExpanded: $showAdvanced) {
-                    VStack(alignment: .leading, spacing: 10) {
-                        HStack {
-                            Text("settings.applicationCategoryType")
-                            Spacer()
-                            if task == .applicationCategoryType {
-                                ProgressView()
-                                    .scaleEffect(0.5)
-                                    .frame(width: 16, height: 16)
-                            }
-                            Picker("", selection: $applicationCategoryType) {
-                                ForEach(LSApplicationCategoryType.allCases, id: \.rawValue) { value in
-                                    Text(value.localizedName)
-                                        .tag(value)
-                                }
-                            }
-                            .frame(width: 225)
-                            .onChange(of: applicationCategoryType) { _ in
-                                task = .applicationCategoryType
-                                app.info.applicationCategoryType = applicationCategoryType
-                                Task.detached {
-                                    do {
-                                        try await Shell.signApp(app.executable)
-
-                                        Task { @MainActor in
-                                            task = .none
-                                        }
-                                    } catch {
-                                        Log.shared.error(error)
-                                    }
-                                }
-                            }
-                        }
-                        HStack {
-                            Text("settings.text.debugger")
-                            VStack(alignment: .leading) {
-                                HStack {
-                                    Toggle("", isOn: $settings.openWithLLDB)
-                                        .labelsHidden()
-                                    Text("settings.toggle.lldb")
-                                }
-
-                                HStack {
-                                    Toggle("", isOn: $settings.openLLDBWithTerminal)
-                                        .labelsHidden()
-                                        .disabled(!settings.openWithLLDB)
-                                    Text("settings.toggle.lldbWithTerminal")
-                                }
-                            }
-                            Spacer()
-                        }
-                        Toggle("settings.toggle.rootWorkDir", isOn: $settings.settings.rootWorkDir)
-                            .disabled(!(hasPlayTools ?? true))
-                            .help("settings.toggle.rootWorkDir.help")
-                        Toggle("settings.toggle.limitMotionUpdateFrequency",
-                               isOn: $settings.settings.limitMotionUpdateFrequency)
-                            .disabled(!(hasPlayTools ?? true))
-                            .help("settings.toggle.limitMotionUpdateFrequency.help")
-                        Toggle("settings.toggle.ignoreUnityKeyboardInitializationError",
-                               isOn: $settings.settings.ignoreUnityKeyboardInitializationError)
-                            .disabled(!(hasPlayTools ?? true))
-                            .help("settings.toggle.ignoreUnityKeyboardInitializationError.help")
-                        CustomDylibView(app: app,
-                                        showCustomPluginWarning: $showCustomPluginWarning,
-                                        hasShownCustomPluginWarning: $hasShownCustomPluginWarning,
-                                        hasPlayTools: $hasPlayTools,
-                                        userDylibs: $userDylibs)
-                        HStack {
-                            Spacer()
-                            Button {
-                                task = .playTools
-                                Task(priority: .userInitiated) {
-                                    if hasPlayTools ?? true {
-                                        await PlayTools.removeFromApp(app.executable)
-                                    } else {
-                                        do {
-                                            try await PlayTools.installInIPA(app.executable)
-                                        } catch {
-                                            Log.shared.error(error)
-                                        }
-                                    }
-
-                                    Task { @MainActor in
-                                        AppsVM.shared.filteredApps = []
-                                        AppsVM.shared.fetchApps()
-                                    }
-
-                                    task = .none
-                                    closeView.toggle()
-                                }
-                            } label: {
-                                Text((hasPlayTools ?? true)
-                                    ? "settings.removePlayTools"
-                                    : "alert.install.injectPlayTools")
-                                    .opacity(task == .playTools ? 0 : 1)
-                                    .overlay {
-                                        if task == .playTools {
-                                            ProgressView().scaleEffect(0.5)
-                                        }
-                                    }
-                            }
-                            .buttonStyle(.borderedProminent).tint(Color.red)
+                HStack {
+                    Text("settings.applicationCategoryType")
+                    Spacer()
+                    if task == .applicationCategoryType {
+                        ProgressView()
+                            .scaleEffect(0.5)
+                            .frame(width: 16, height: 16)
+                    }
+                    Picker("", selection: $applicationCategoryType) {
+                        ForEach(LSApplicationCategoryType.allCases, id: \.rawValue) { value in
+                            Text(value.localizedName)
+                                .tag(value)
                         }
                     }
-                    .padding(.top, 6)
+                    .frame(width: 225)
+                    .onChange(of: applicationCategoryType) { _ in
+                        task = .applicationCategoryType
+                        app.info.applicationCategoryType = applicationCategoryType
+                        Task.detached {
+                            do {
+                                try await Shell.signApp(app.executable)
+
+                                Task { @MainActor in
+                                    task = .none
+                                }
+                            } catch {
+                                Log.shared.error(error)
+                            }
+                        }
+                    }
+                }
+                HStack {
+                    Text("settings.text.debugger")
+                    VStack(alignment: .leading) {
+                        HStack {
+                            Toggle("", isOn: $settings.openWithLLDB)
+                                .labelsHidden()
+                            Text("settings.toggle.lldb")
+                        }
+
+                        HStack {
+                            Toggle("", isOn: $settings.openLLDBWithTerminal)
+                                .labelsHidden()
+                                .disabled(!settings.openWithLLDB)
+                            Text("settings.toggle.lldbWithTerminal")
+                        }
+                    }
+                    Spacer()
+                }
+                HStack {
+                    Toggle("settings.toggle.rootWorkDir", isOn: $settings.settings.rootWorkDir)
+                        .disabled(!(hasPlayTools ?? true))
+                        .help("settings.toggle.rootWorkDir.help")
+                    Spacer()
+                }
+                HStack {
+                    Toggle("settings.toggle.limitMotionUpdateFrequency",
+                           isOn: $settings.settings.limitMotionUpdateFrequency)
+                        .disabled(!(hasPlayTools ?? true))
+                        .help("settings.toggle.limitMotionUpdateFrequency.help")
+                    Spacer()
+                }
+                HStack {
+                    Toggle("settings.toggle.ignoreUnityKeyboardInitializationError",
+                           isOn: $settings.settings.ignoreUnityKeyboardInitializationError)
+                        .disabled(!(hasPlayTools ?? true))
+                        .help("settings.toggle.ignoreUnityKeyboardInitializationError.help")
+                    Spacer()
+                }
+                CustomDylibView(app: app,
+                                showCustomPluginWarning: $showCustomPluginWarning,
+                                hasShownCustomPluginWarning: $hasShownCustomPluginWarning,
+                                hasPlayTools: $hasPlayTools,
+                                userDylibs: $userDylibs)
+                HStack {
+                    Spacer()
+                    Button {
+                        task = .playTools
+                        Task(priority: .userInitiated) {
+                            if hasPlayTools ?? true {
+                                await PlayTools.removeFromApp(app.executable)
+                            } else {
+                                do {
+                                    try await PlayTools.installInIPA(app.executable)
+                                } catch {
+                                    Log.shared.error(error)
+                                }
+                            }
+
+                            Task { @MainActor in
+                                AppsVM.shared.filteredApps = []
+                                AppsVM.shared.fetchApps()
+                            }
+
+                            task = .none
+                            closeView.toggle()
+                        }
+                    } label: {
+                        Text((hasPlayTools ?? true)
+                            ? "settings.removePlayTools"
+                            : "alert.install.injectPlayTools")
+                            .opacity(task == .playTools ? 0 : 1)
+                            .overlay {
+                                if task == .playTools {
+                                    ProgressView().scaleEffect(0.5)
+                                }
+                            }
+                    }
+                    .buttonStyle(.borderedProminent).tint(Color.red)
                 }
             }
             .padding()
