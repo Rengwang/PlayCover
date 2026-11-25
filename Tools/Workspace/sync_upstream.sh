@@ -350,6 +350,11 @@ install_app() {
   echo "Installed and verified:"
   ls -la "$target_app/Contents/Frameworks/PlayTools.framework/Versions/A/PlayTools" \
          "$target_fw/Versions/A/PlayTools"
+
+  if [ -f "$PLAYTOOLS_DIR/Tests/check-compat-invariants.py" ]; then
+    echo "=== Running PlayTools compatibility invariant checks ==="
+    python3 "$PLAYTOOLS_DIR/Tests/check-compat-invariants.py"
+  fi
 }
 
 cmd="${1:-}"
