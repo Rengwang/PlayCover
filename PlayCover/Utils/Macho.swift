@@ -152,9 +152,9 @@ class Macho {
 
     static func supportsMarketplaceKitCompatibility(_ executable: URL, in bundle: URL, stubBinary: URL) -> Bool {
         guard sharedCacheContainsPath != nil,
+              isMissingHostLibrary(marketplaceKitInstallName),
               FileManager.default.fileExists(atPath: stubBinary.path) else { return false }
 
-        var requiresMarketplaceKit = false
         var marketplaceKitClients: [URL] = []
         traverseStartupGraph(executable, in: bundle) { canonicalImage, links in
             let referencesMarketplaceKit = (links.required + links.optional).contains {
@@ -163,16 +163,10 @@ class Macho {
             if referencesMarketplaceKit {
                 marketplaceKitClients.append(canonicalImage)
             }
-            for dependency in links.required.reversed() {
-                let nativePath = normalizedSystemPath(dependency)
-                if nativePath == marketplaceKitInstallName, isMissingHostLibrary(nativePath) {
-                    requiresMarketplaceKit = true
-                }
-            }
             return true
         }
 
-        guard requiresMarketplaceKit, !marketplaceKitClients.isEmpty,
+        guard !marketplaceKitClients.isEmpty,
               let exportedSymbols = exportedSymbols(at: stubBinary) else {
             return false
         }

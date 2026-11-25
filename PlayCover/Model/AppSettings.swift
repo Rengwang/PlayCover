@@ -58,9 +58,11 @@ struct AppSettingsData: Codable {
     var useNativePlatform = false
     var cameraRotation = -1
     var spoofPowerState = false
+    var blockSplashAds = true
     /// Cached result of the anti-tamper scan: matcher version + per-binary fingerprint.
     var machoTrapSchemaVersion = 0
     var machoScanFingerprint = ""
+    var machoScanDirToken = ""
 
     init() {}
 
@@ -111,10 +113,13 @@ struct AppSettingsData: Codable {
         useNativePlatform = try container.decodeIfPresent(Bool.self, forKey: .useNativePlatform) ?? false
         cameraRotation = try container.decodeIfPresent(Int.self, forKey: .cameraRotation) ?? -1
         spoofPowerState = try container.decodeIfPresent(Bool.self, forKey: .spoofPowerState) ?? false
+        blockSplashAds = try container.decodeIfPresent(Bool.self, forKey: .blockSplashAds) ?? true
         machoTrapSchemaVersion = try container.decodeIfPresent(Int.self,
                                                                forKey: .machoTrapSchemaVersion) ?? 0
         machoScanFingerprint = try container.decodeIfPresent(String.self,
                                                              forKey: .machoScanFingerprint) ?? ""
+        machoScanDirToken = try container.decodeIfPresent(String.self,
+                                                          forKey: .machoScanDirToken) ?? ""
     }
 }
 
@@ -196,7 +201,14 @@ class AppSettings {
         } else if updatedSettings.resolution == 7 {
             applySmartAdaptDefaults(to: &updatedSettings)
         }
-        settings = updatedSettings
+        if updatedSettings.notch != settings.notch
+            || updatedSettings.windowWidth != settings.windowWidth
+            || updatedSettings.windowHeight != settings.windowHeight
+            || updatedSettings.resizableAspectRatioType != settings.resizableAspectRatioType
+            || updatedSettings.resizableAspectRatioWidth != settings.resizableAspectRatioWidth
+            || updatedSettings.resizableAspectRatioHeight != settings.resizableAspectRatioHeight {
+            settings = updatedSettings
+        }
     }
 
     static func autoResolution() -> (width: Int, height: Int) {

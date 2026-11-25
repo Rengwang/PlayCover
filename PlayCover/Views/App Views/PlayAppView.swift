@@ -24,7 +24,7 @@ struct PlayAppView: View {
             .gesture(TapGesture(count: 2).onEnded {
                 // Launch the app from a separate thread (allow us to Sayori it if needed)
                 Task(priority: .userInitiated) {
-                    if !viewModel.app.isStarting {
+                    if !viewModel.app.isStarting && !viewModel.app.isClearingData {
                         viewModel.showStartingProgress = true
                         await viewModel.app.launch()
                         viewModel.showStartingProgress = false

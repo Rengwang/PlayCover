@@ -307,6 +307,8 @@
 "settings.usageMode.help" = "App Mode disables keymapping, Discord Rich Presence, battery/thermal spoofing, and display-sleep blocking for minimum idle wakeups and power draw. Game Mode enables keymapping and battery/thermal spoofing.";
 "settings.toggle.spoofPowerState" = "Spoof Battery & Thermal State (Game Mode)";
 "settings.toggle.spoofPowerState.help" = "Report 100% battery, nominal thermal state, and Low Power Mode off to the app. Keep OFF so apps respect macOS Low Power Mode and thermal management to save power. Restart app to apply.";
+"settings.toggle.blockSplashAds" = "Block generic third-party splash ads";
+"settings.toggle.blockSplashAds.help" = "Short-circuits standard third-party splash ad SDKs (Pangle/CSJ, GDT, Baidu, Kuaishou, AnyThink/TopOn, MS, BeiZi, JAD, AdMob, Wind) by returning an immediate no-fill callback. Takes effect after restarting the app.";
 
 
 "configSigning.header" = "Configure Package Signing";
@@ -378,3 +380,14 @@
 "alert.version.title" = "New Version Available";
 "alert.version.text" = "A new version for %@ is available. Do you want to download it?";
 
+
+"alert.appData.quitFirst" = "Quit the app before clearing its data.";
+"alert.appData.failed" = "Couldn’t clear app data";
+"alert.appData.permission" = "macOS denied access to the app’s data. In System Settings, enable Full Disk Access for PlayCover, then reopen PlayCover and try again.";
+"alert.appData.openSettings" = "Open Full Disk Access Settings";
+"alert.appData.stillExists" = "The item is still at %@. Quit the app and try again.";
+
+"settings.picker.deviceProfile" = "Device & Layout:";
+"settings.picker.deviceProfile.systemDefault" = "System Default (Mac Catalyst)";
+"settings.picker.deviceProfile.help" = "Select the simulated iOS device and matching UI layout together (iPhone Duo, iPhone, iPad, or native Mac Catalyst). Restart app to apply.";
+"settings.section.advanced" = "Advanced & Troubleshooting";

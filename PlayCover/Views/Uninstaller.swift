@@ -14,6 +14,11 @@ struct CheckBoxHelper {
 }
 
 class Uninstaller {
+    private enum AppDataError: Error {
+        case invalidBundleIdentifier
+        case itemStillExists(URL)
+    }
+
     private static let libraryUrl = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library")
     private static let pruneURLs: [URL] = [
         PlayTools.playCoverContainer.appendingPathComponent("App Settings"),
@@ -102,17 +107,19 @@ class Uninstaller {
                 UninstallPreferences.shared.showUninstallPopup = false
             }
 
-            await uninstall(app)
+            await uninstall(app, in: window)
         } else {
-            await uninstall(app)
+            guard let window = NSApplication.shared.windows.first else { return }
+            await uninstall(app, in: window)
         }
     }
 
-    static func uninstall(_ app: PlayApp) async {
+    @MainActor
+    private static func uninstall(_ app: PlayApp, in window: NSWindow) async {
         var uninstallNum = 0
 
         if UninstallPreferences.shared.clearAppData {
-            await app.clearAllCache()
+            guard await clearAppData(of: app, in: window) else { return }
             uninstallNum += 1
         }
 
@@ -169,22 +176,129 @@ class Uninstaller {
         guard let window = NSApplication.shared.windows.first,
               await alert.beginSheetModal(for: window) == .alertFirstButtonReturn else { return }
 
-        await clearCache(of: app)
+        _ = await clearAppData(of: app, in: window)
     }
 
-    static func clearCache(of app: PlayApp) async {
-        await app.clearAllCache()
-    }
+    @MainActor
+    private static func clearAppData(of app: PlayApp, in window: NSWindow) async -> Bool {
+        guard !app.isClearingData else { return false }
+        let bundleId = app.info.bundleIdentifier
+        let runningApps = NSRunningApplication.runningApplications(withBundleIdentifier: bundleId)
+        guard !app.isStarting, !runningApps.contains(where: { !$0.isTerminated }) else {
+            let alert = NSAlert()
+            alert.messageText = NSLocalizedString("alert.appData.quitFirst", comment: "")
+            alert.addButton(withTitle: NSLocalizedString("button.OK", comment: ""))
+            _ = await alert.beginSheetModal(for: window)
+            return false
+        }
 
-    static func clearExternalCache(_ bundleId: String) {
+        app.isClearingData = true
+        defer { app.isClearingData = false }
         do {
-            for cache in cacheURLs {
-                cache.enumerateContents(options: [.skipsSubdirectoryDescendants]) { file, _ in
-                    if file.path.contains(bundleId) {
-                        try FileManager.default.trashItem(at: file, resultingItemURL: nil)
-                    }
-                }
+            try await Task.detached(priority: .userInitiated) {
+                try clearExternalCache(bundleId, requestContainerAccess: true)
+            }.value
+            return true
+        } catch {
+            await showClearAppDataError(error, in: window)
+            return false
+        }
+    }
+
+    @MainActor
+    private static func showClearAppDataError(_ error: Error, in window: NSWindow) async {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = NSLocalizedString("alert.appData.failed", comment: "")
+        if isPermissionError(error) {
+            alert.informativeText = NSLocalizedString("alert.appData.permission", comment: "")
+            alert.addButton(withTitle: NSLocalizedString("alert.appData.openSettings", comment: ""))
+            alert.addButton(withTitle: NSLocalizedString("button.Cancel", comment: ""))
+            if await alert.beginSheetModal(for: window) == .alertFirstButtonReturn,
+               let settings = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") {
+                NSWorkspace.shared.open(settings)
             }
+            return
+        }
+        if case AppDataError.itemStillExists(let url) = error {
+            let format = NSLocalizedString("alert.appData.stillExists", comment: "")
+            alert.informativeText = String(format: format, url.path)
+        } else {
+            alert.informativeText = error.localizedDescription
+        }
+        alert.addButton(withTitle: NSLocalizedString("button.OK", comment: ""))
+        _ = await alert.beginSheetModal(for: window)
+    }
+
+    private static func isPermissionError(_ error: Error) -> Bool {
+        let error = error as NSError
+        switch (error.domain, error.code) {
+        case (NSCocoaErrorDomain, NSFileReadNoPermissionError),
+             (NSCocoaErrorDomain, NSFileWriteNoPermissionError),
+             (NSPOSIXErrorDomain, Int(EPERM)),
+             (NSPOSIXErrorDomain, Int(EACCES)),
+             (NSOSStatusErrorDomain, -5000):
+            return true
+        default:
+            guard let underlying = error.userInfo[NSUnderlyingErrorKey] as? Error else { return false }
+            return isPermissionError(underlying)
+        }
+    }
+
+    static func clearExternalCache(_ bundleId: String, requestContainerAccess: Bool = false) throws {
+        let allowedCharacters = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-")
+        guard !bundleId.isEmpty, !bundleId.hasPrefix("."),
+              bundleId.unicodeScalars.allSatisfy(allowedCharacters.contains),
+              bundleId.caseInsensitiveCompare("io.playcover.PlayCover") != .orderedSame,
+              bundleId.caseInsensitiveCompare(Bundle.main.bundleIdentifier ?? "") != .orderedSame else {
+            throw AppDataError.invalidBundleIdentifier
+        }
+
+        let container = AppContainer(bundleId: bundleId).containerUrl
+        let data = container.appendingPathComponent("Data", isDirectory: true)
+        let canAccessData: Bool
+        if requestContainerAccess,
+           try itemAttributes(at: container)?[.type] as? FileAttributeType == .typeDirectory,
+           try itemAttributes(at: data)?[.type] as? FileAttributeType == .typeDirectory {
+            // Open the selected container directly so macOS can request access before it is trashed.
+            _ = try FileManager.default.contentsOfDirectory(atPath: data.path)
+            canAccessData = true
+        } else {
+            canAccessData = false
+        }
+
+        do {
+            try trashAppDataItem(container)
+        } catch where canAccessData && isPermissionError(error) {
+            // The container's system metadata can be protected even when its Data directory is accessible.
+            try trashAppDataItem(data)
+        }
+
+        let items = cacheURLs.dropFirst().map { $0.appendingPathComponent(bundleId) } + [
+            libraryUrl.appendingPathComponent("HTTPStorages").appendingPathComponent(bundleId + ".binarycookies"),
+            libraryUrl.appendingPathComponent("Saved Application State").appendingPathComponent(bundleId + ".savedState")
+        ]
+        for item in items {
+            try trashAppDataItem(item)
+        }
+    }
+
+    private static func trashAppDataItem(_ url: URL) throws {
+        guard try itemAttributes(at: url) != nil else { return }
+        try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+        guard try itemAttributes(at: url) == nil else { throw AppDataError.itemStillExists(url) }
+    }
+
+    private static func itemAttributes(at url: URL) throws -> [FileAttributeKey: Any]? {
+        do {
+            return try FileManager.default.attributesOfItem(atPath: url.path)
+        } catch {
+            let failure = error as NSError
+            if failure.domain == NSCocoaErrorDomain,
+               [NSFileNoSuchFileError, NSFileReadNoSuchFileError].contains(failure.code) {
+                return nil
+            }
+            throw error
         }
     }
 

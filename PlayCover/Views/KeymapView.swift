@@ -21,7 +21,7 @@ struct KeymapView: View {
         VStack {
             HStack {
                 Group {
-                    if let image = viewModel.appIcon {
+                    if let image = viewModel.appIcon ?? Cacher.shared.cachedAppIcon(forPath: viewModel.app.url.path) {
                         Image(nsImage: image)
                             .resizable()
                             .aspectRatio(contentMode: .fit)
@@ -40,8 +40,13 @@ struct KeymapView: View {
                     .multilineTextAlignment(.leading)
                 Spacer()
             }
-            .task(priority: .userInitiated) {
-                viewModel.appIcon = viewModel.cache.readImage(forKey: viewModel.app.info.bundleIdentifier)
+            .task(id: viewModel.app.url, priority: .userInitiated) {
+                let path = viewModel.app.url.path
+                if let cached = Cacher.shared.cachedAppIcon(forPath: path) {
+                    viewModel.appIcon = cached
+                } else {
+                    viewModel.appIcon = await Cacher.shared.loadAppIcon(forPath: path)
+                }
             }
 
             List(selection: $viewModel.selectedKeymap) {

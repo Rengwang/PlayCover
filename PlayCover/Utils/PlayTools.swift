@@ -102,17 +102,51 @@ class PlayTools {
         }
     }
 
+    private static let marketplaceCompatibilityLock = NSLock()
+    private static var cleanMarketplaceCompatibilityKeys: Set<String> = []
+
     static func configureMarketplaceKitCompatibility(_ info: AppInfo, in bundle: URL) throws -> Bool {
         let executable = bundle.appendingEscapedPathComponent(info.executableName)
         let compatibilityBinary = marketplaceKitCompatibility
             .appendingPathComponent("MarketplaceKit.framework")
             .appendingPathComponent("MarketplaceKit")
-        // Enable for any app requiring unavailable MarketplaceKit if all imported symbols are covered by the stub.
+
+        let execAttrs = try? FileManager.default.attributesOfItem(atPath: executable.path)
+        let execSize = (execAttrs?[.size] as? NSNumber)?.int64Value ?? -1
+        let execMtime = (execAttrs?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? -1
+        let plistAttrs = try? FileManager.default.attributesOfItem(atPath: info.url.path)
+        let plistSize = (plistAttrs?[.size] as? NSNumber)?.int64Value ?? -1
+        let plistMtime = (plistAttrs?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? -1
+        let stubAttrs = try? FileManager.default.attributesOfItem(atPath: compatibilityBinary.path)
+        let stubMtime = (stubAttrs?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? -1
+        let dyldFrameworkPath = info.lsEnvironment["DYLD_FRAMEWORK_PATH"] ?? ""
+        let cacheKey = "\(executable.path)|\(execSize)|\(execMtime)|\(plistSize)|\(plistMtime)|\(stubMtime)|\(dyldFrameworkPath)"
+
+        if execSize >= 0 {
+            marketplaceCompatibilityLock.lock()
+            let alreadyChecked = cleanMarketplaceCompatibilityKeys.contains(cacheKey)
+            marketplaceCompatibilityLock.unlock()
+            if alreadyChecked {
+                return false
+            }
+        }
+
+        // Enable for any app referencing unavailable MarketplaceKit (required or weak-linked)
+        // if all imported symbols are covered by the stub.
         let enabled = Macho.supportsMarketplaceKitCompatibility(executable,
                                                                 in: bundle,
                                                                 stubBinary: compatibilityBinary)
-        return try info.updateManagedFrameworkPath(marketplaceKitCompatibility.path, enabled: enabled)
+        let changed = try info.updateManagedFrameworkPath(marketplaceKitCompatibility.path, enabled: enabled)
+        if !changed && execSize >= 0 {
+            marketplaceCompatibilityLock.lock()
+            cleanMarketplaceCompatibilityKeys.insert(cacheKey)
+            marketplaceCompatibilityLock.unlock()
+        }
+        return changed
     }
+
+    private static let launchDependencyLock = NSLock()
+    private static var checkedLaunchDependencies: Set<String> = []
 
     static func reportUnresolvedLaunchDependencies(_ info: AppInfo, in bundle: URL) {
         let managedPath = marketplaceKitCompatibility.path
@@ -120,7 +154,18 @@ class PlayTools {
         guard !Macho.hasCustomLibrarySearch(environment, exceptFrameworkPath: managedPath) else { return }
 
         let executable = bundle.appendingEscapedPathComponent(info.executableName)
-        let usingMarketplaceCompatibility = environment["DYLD_FRAMEWORK_PATH"] == managedPath
+        let attrs = try? FileManager.default.attributesOfItem(atPath: executable.path)
+        let size = (attrs?[.size] as? NSNumber)?.int64Value ?? -1
+        let mtime = (attrs?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? -1
+        let dyldFrameworkPath = environment["DYLD_FRAMEWORK_PATH"] ?? ""
+        let cacheKey = "\(executable.path)|\(size)|\(mtime)|\(dyldFrameworkPath)"
+
+        launchDependencyLock.lock()
+        let alreadyChecked = checkedLaunchDependencies.contains(cacheKey)
+        launchDependencyLock.unlock()
+        guard !alreadyChecked else { return }
+
+        let usingMarketplaceCompatibility = dyldFrameworkPath == managedPath
         if let missing = Macho.firstUnavailableHostLibrary(executable, in: bundle, matching: { path in
             !usingMarketplaceCompatibility || path != Macho.marketplaceKitInstallName
         }) {
@@ -128,6 +173,10 @@ class PlayTools {
                 ? PlayCoverError.marketplaceKitUnavailable
                 : PlayCoverError.hostDependencyUnavailable(path: missing.path, image: missing.image)
             Log.shared.log(diagnostic.localizedDescription)
+        } else {
+            launchDependencyLock.lock()
+            checkedLaunchDependencies.insert(cacheKey)
+            launchDependencyLock.unlock()
         }
     }
 
@@ -175,14 +224,74 @@ class PlayTools {
         }
     }
 
+    private static let pluginInstallCacheLock = NSLock()
+    private static var cleanPluginInstallStamps: [String: String] = [:]
+
+    private static func mtimeToken(for url: URL) -> String {
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: url.path) else { return "missing" }
+        let size = (attrs[.size] as? NSNumber)?.int64Value ?? -1
+        let mtime = (attrs[.modificationDate] as? Date)?.timeIntervalSince1970 ?? -1
+        return "\(size):\(mtime)"
+    }
+
+    private static func pluginInstallStamp(for payload: URL) -> String {
+        var parts: [String] = [mtimeToken(for: bundledPlayToolsFramework)]
+        let pluginsSource = bundledPlayToolsFramework.appendingPathComponent("PlugIns")
+        let pluginsTarget = payload.appendingPathComponent("PlugIns")
+        let bundleNames = ((try? FileManager.default.contentsOfDirectory(atPath: pluginsSource.path)) ?? [])
+            .filter { $0.hasSuffix(".bundle") }
+            .sorted()
+        for name in bundleNames {
+            let srcBundle = pluginsSource.appendingPathComponent(name)
+            let srcExec = Bundle(url: srcBundle)?.executableURL
+            let dstBundle = pluginsTarget.appendingPathComponent(name)
+            let dstExec = Bundle(url: dstBundle)?.executableURL
+            parts.append("b:\(name):\(srcExec.map(mtimeToken(for:)) ?? "missing"):\(dstExec.map(mtimeToken(for:)) ?? "missing")")
+        }
+
+        let roots = [
+            bundledPlayToolsFramework,
+            bundledPlayToolsFramework.appendingPathComponent("Versions/A/Resources")
+        ]
+        for root in roots {
+            let lprojs = ((try? FileManager.default.contentsOfDirectory(atPath: root.path)) ?? [])
+                .filter { $0.hasSuffix(".lproj") }
+                .sorted()
+            for lproj in lprojs {
+                let srcStrings = root.appendingPathComponent(lproj).appendingPathComponent("Playtools.strings")
+                let dstStrings = payload.appendingPathComponent(lproj).appendingPathComponent("Playtools.strings")
+                parts.append("s:\(lproj):\(mtimeToken(for: srcStrings)):\(mtimeToken(for: dstStrings))")
+            }
+        }
+        return parts.joined(separator: "|")
+    }
+
     static func installPluginInIPA(_ payload: URL, reusingInstalledFiles: Bool = false,
                                    willChange: () throws -> Void = {}) throws {
+        var initialStamp: String?
+        if reusingInstalledFiles {
+            let stamp = pluginInstallStamp(for: payload)
+            initialStamp = stamp
+            pluginInstallCacheLock.lock()
+            let cached = cleanPluginInstallStamps[payload.path]
+            pluginInstallCacheLock.unlock()
+            if cached == stamp {
+                return
+            }
+        }
+
+        var didChange = false
+        let trackedWillChange: () throws -> Void = {
+            didChange = true
+            try willChange()
+        }
+
         let allFiles = try FileManager.default.contentsOfDirectory(
             at: bundledPlayToolsFramework, includingPropertiesForKeys: [])
         for localizationDirectory in allFiles where localizationDirectory.pathExtension == "lproj" {
             try copyAsset(target: payload, directoryName: localizationDirectory.lastPathComponent,
                           component: "Playtools", pathExtension: "strings",
-                          reusingInstalledFiles: reusingInstalledFiles, willChange: willChange)
+                          reusingInstalledFiles: reusingInstalledFiles, willChange: trackedWillChange)
         }
 
         let bundledPlayToolsResources = bundledPlayToolsFramework
@@ -196,11 +305,19 @@ class PlayTools {
                 try copyAsset(source: bundledPlayToolsResources, target: payload,
                               directoryName: localizationDirectory.lastPathComponent,
                               component: "Playtools", pathExtension: "strings",
-                              reusingInstalledFiles: reusingInstalledFiles, willChange: willChange)
+                              reusingInstalledFiles: reusingInstalledFiles, willChange: trackedWillChange)
             }
         }
 
-        try installComponentBundles(into: payload, reusingInstalledFiles: reusingInstalledFiles, willChange: willChange)
+        try installComponentBundles(into: payload, reusingInstalledFiles: reusingInstalledFiles,
+                                    willChange: trackedWillChange)
+
+        if reusingInstalledFiles {
+            let stamp = didChange ? pluginInstallStamp(for: payload) : (initialStamp ?? pluginInstallStamp(for: payload))
+            pluginInstallCacheLock.lock()
+            cleanPluginInstallStamps[payload.path] = stamp
+            pluginInstallCacheLock.unlock()
+        }
     }
 
     private static func installComponentBundles(into payload: URL, reusingInstalledFiles: Bool,

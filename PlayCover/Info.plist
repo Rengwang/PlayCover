@@ -76,6 +76,8 @@
 	<string>public.app-category.utilities</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
+	<key>NSAppDataUsageDescription</key>
+	<string>PlayCover needs access to the data container of the app you choose to clear.</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>Copyright © PlayCover Community Edition</string>
 	<key>NSSystemAdministrationUsageDescription</key>

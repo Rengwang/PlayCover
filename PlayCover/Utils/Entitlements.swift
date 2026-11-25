@@ -53,8 +53,14 @@ class Entitlements {
         return information as? [String: Any]
     }
 
-    static func areEntitlementsValid(app: PlayApp) throws -> Bool {
-        guard let old = try dumpEntitlements(exec: app.executable) as? [String: AnyHashable] else { return false }
+    static func areEntitlementsValid(app: PlayApp, signingInfo: [String: Any]? = nil) throws -> Bool {
+        let oldAny: [String: Any]
+        if let signingInfo {
+            oldAny = signingInfo[kSecCodeInfoEntitlementsDict as String] as? [String: Any] ?? [:]
+        } else {
+            oldAny = try dumpEntitlements(exec: app.executable)
+        }
+        guard let old = oldAny as? [String: AnyHashable] else { return false }
         guard let new = try composeEntitlements(app) as? [String: AnyHashable] else { return false }
         return new == old
     }
@@ -188,6 +194,39 @@ class Entitlements {
         kTCCServiceSystemPolicyDocumentsFolder
         """
 
+    private struct CachedPlayRules {
+        let fileSize: Int64
+        let modified: TimeInterval
+        let rules: PlayRules
+    }
+
+    private static let rulesCacheLock = NSLock()
+    private static var rulesCache: [String: CachedPlayRules] = [:]
+
+    private static func loadPlayRules(at path: URL) throws -> PlayRules {
+        let attrs = try? FileManager.default.attributesOfItem(atPath: path.path)
+        let size = (attrs?[.size] as? NSNumber)?.int64Value ?? -1
+        let modified = (attrs?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? -1
+
+        if size >= 0 {
+            rulesCacheLock.lock()
+            let cached = rulesCache[path.path]
+            rulesCacheLock.unlock()
+            if let cached, cached.fileSize == size && cached.modified == modified {
+                return cached.rules
+            }
+        }
+
+        let data = try Data(contentsOf: path, options: .mappedIfSafe)
+        let decoded = try YAMLDecoder().decode(PlayRules.self, from: data)
+        if size >= 0 {
+            rulesCacheLock.lock()
+            rulesCache[path.path] = CachedPlayRules(fileSize: size, modified: modified, rules: decoded)
+            rulesCacheLock.unlock()
+        }
+        return decoded
+    }
+
     public static func getDefaultRules() throws -> PlayRules {
         var path: URL
         let yamlURL = FileManager.default.homeDirectoryForCurrentUser
@@ -204,10 +243,7 @@ class Entitlements {
         }
 
         do {
-            let data = try Data(contentsOf: path, options: .mappedIfSafe)
-            let decoder = YAMLDecoder()
-            let decoded: PlayRules = try decoder.decode(PlayRules.self, from: data)
-            return decoded
+            return try loadPlayRules(at: path)
         } catch {
             print("failed to get default rules at \(path): \(error)")
             throw "failed to get default rules at \(path): \(error)"
@@ -230,10 +266,7 @@ class Entitlements {
         }
 
         do {
-            let data = try Data(contentsOf: path, options: .mappedIfSafe)
-            let decoder = YAMLDecoder()
-            let decoded: PlayRules = try decoder.decode(PlayRules.self, from: data)
-            return decoded
+            return try loadPlayRules(at: path)
         } catch {
             print("failed to get bundle rules at \(path): \(error)")
             throw error

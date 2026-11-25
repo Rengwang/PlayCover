@@ -370,3 +370,16 @@
 "settings.toggle.nativePlatform" = "使用原生 Mac Catalyst 平台";
 "settings.toggle.nativePlatform.help" = "讓應用程式使用系統實際的 Mac Catalyst 平台身分判斷 API 是否可用。重新啟動應用程式後生效。";
 "settings.toggle.sdkShift.help" = "參考 SDKShift for Duo 思路：執行時向應用程式提供高版本 Duo SDK（iOS 27.2）標記並解除全螢幕/固定比例鎖定，使原本固定比例的視窗可自由調整大小（重啟應用程式生效）。";
+"settings.toggle.blockSplashAds" = "封鎖通用第三方開屏廣告";
+"settings.toggle.blockSplashAds.help" = "透過標準無填充（No-Fill）回調短路常見第三方商業開屏廣告 SDK（穿山甲、優量匯、百度、快手、TopOn/AnyThink、美數、倍孜、京東聯盟、AdMob、Sigmob），不影響應用程式本身功能。重新啟動應用程式後生效。";
+
+"alert.appData.quitFirst" = "請完全結束該應用程式，再清除資料。";
+"alert.appData.failed" = "無法清除應用程式資料";
+"alert.appData.permission" = "macOS 拒絕存取應用程式資料。請在系統設定中為 PlayCover 開啟「完整磁碟存取權」，然後重新開啟 PlayCover 並重試。";
+"alert.appData.openSettings" = "開啟完整磁碟存取設定";
+"alert.appData.stillExists" = "資料仍位於 %@。請完全結束該應用程式後重試。";
+
+"settings.picker.deviceProfile" = "裝置與佈局：";
+"settings.picker.deviceProfile.systemDefault" = "系統預設（Mac Catalyst 原生）";
+"settings.picker.deviceProfile.help" = "統一選擇模擬的 iOS 裝置型號與對應介面佈局（iPhone Duo、iPhone、iPad 或原生 Mac Catalyst），避免機型與佈局不一致。重新啟動應用程式後生效。";
+"settings.section.advanced" = "進階與排障選項";

@@ -15,10 +15,12 @@ extension PlayApp {
 
             try? FileManager.default.createDirectory(at: appTmp, withIntermediateDirectories: false)
 
-            appTmp.enumerateContents { url, _ in
-                if url.lastPathComponent.range(of: "discord-ipc-[0-9]", options: .regularExpression) != nil {
+            for ipcPort in 0..<10 {
+                let staleSocket = appTmp.appendingPathComponent("discord-ipc-\(ipcPort)")
+                var st = stat()
+                if lstat(staleSocket.path, &st) == 0 {
                     do {
-                        try FileManager.default.removeItem(at: url)
+                        try FileManager.default.removeItem(at: staleSocket)
                     } catch {
                         print("failed to remove discord ipc: \(error)")
                     }

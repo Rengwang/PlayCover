@@ -25,6 +25,7 @@ class PlayApp: BaseApp {
     var displaySleepAssertionID: IOPMAssertionID?
     private var workspaceObservers: [NSObjectProtocol] = []
     public var isStarting = false
+    var isClearingData = false
     var sessionDisableKeychain: Bool = false
 
     deinit {
@@ -78,6 +79,12 @@ class PlayApp: BaseApp {
 
             if await VersionCheck.shared.checkNewVersion(myApp: self) { return }
 
+            async let keyCoverPasswordPrep: Void = {
+                if KeyCover.shared.isKeyCoverEnabled() {
+                    await KeyCover.prepareManagedPassword()
+                }
+            }()
+
             settings.sync()
 
             // Remove legacy ProxyShield.dylib LSEnvironment entry if present.
@@ -92,25 +99,31 @@ class PlayApp: BaseApp {
             // assembled before its signature is sealed over its contents.
             // If the app does not have PlayTools, do not install PlugIns
             let playToolsInstalled = hasPlayTools()
+            var didUpdatePlayToolsPlugins = false
             if playToolsInstalled {
-                try PlayTools.installPluginInIPA(url, reusingInstalledFiles: true,
-                                                 willChange: invalidatePlayToolsResourceSeal)
+                try PlayTools.installPluginInIPA(url, reusingInstalledFiles: true) {
+                    didUpdatePlayToolsPlugins = true
+                    try self.invalidatePlayToolsResourceSeal()
+                }
             }
 
             // Neutralize any __RESTRICT/__restrict segment in place so dyld allows
             // @rpath expansion and DYLD_INSERT_LIBRARIES on macOS even for previously
             // installed bundles.
             let strippedRestrict = (try? Macho.stripRestrictSegment(atURL: executable)) ?? false
+            var signingInfo = Entitlements.signingInformation(exec: executable)
 
             if try updatedMarketplaceKit || cleanedProxyShield || didRepairMacho || strippedRestrict
-                || !Entitlements.areEntitlementsValid(app: self) {
-                if playToolsInstalled {
+                || didUpdatePlayToolsPlugins
+                || !Entitlements.areEntitlementsValid(app: self, signingInfo: signingInfo) {
+                if playToolsInstalled && !didUpdatePlayToolsPlugins {
                     try invalidatePlayToolsResourceSeal()
                 }
                 try signBundle()
+                signingInfo = nil
             }
 
-            if try !isInfoPlistSigned() {
+            if try !isInfoPlistSigned(signingInfo: signingInfo) {
                 try Shell.signApp(executable)
             }
 
@@ -126,6 +139,7 @@ class PlayApp: BaseApp {
             }
 
             // Wait for keychain unlock to finish before continuing
+            await keyCoverPasswordPrep
             await unlockKeyCover()
 
             if try !PlayTools.isInstalled() {
@@ -155,18 +169,31 @@ class PlayApp: BaseApp {
     /// The trap scan is cached per binary fingerprint so repeat launches do not
     /// re-read every Mach-O in the bundle.
     private func repairMachOsIfNeeded() async throws -> Bool {
+        let cachedVersion = settings.settings.machoTrapSchemaVersion
+        let cachedFingerprint = settings.settings.machoScanFingerprint
+        let currentDirToken = machoScanDirToken()
+        if cachedVersion == Macho.trapSchemaVersion,
+           cachedMachoScanStillValid(fingerprint: cachedFingerprint, dirToken: currentDirToken) {
+            return false
+        }
+
         self.validMachOs = nil
         let machos = Installer.resolveValidMachOs(self)
 
-        let cachedVersion = settings.settings.machoTrapSchemaVersion
-        let cachedFingerprint = settings.settings.machoScanFingerprint
         let cachedFingerprintMatches = !cachedFingerprint.isEmpty
             && cachedFingerprint == machoScanFingerprint(for: machos)
         let scanNeeded = cachedVersion != Macho.trapSchemaVersion || !cachedFingerprintMatches
 
         // Every binary's path, size and modification date was checked above. An unchanged
         // successful scan needs no second pass over Mach-O headers or signature pages.
-        guard scanNeeded else { return false }
+        if !scanNeeded {
+            if settings.settings.machoScanDirToken != currentDirToken {
+                var updated = settings.settings
+                updated.machoScanDirToken = currentDirToken
+                settings.settings = updated
+            }
+            return false
+        }
 
         var needsBundleResign = false
         var convertedAny = false
@@ -212,8 +239,10 @@ class PlayApp: BaseApp {
             var updated = settings.settings
             updated.machoTrapSchemaVersion = Macho.trapSchemaVersion
             updated.machoScanFingerprint = machoScanFingerprint(for: machos)
+            updated.machoScanDirToken = machoScanDirToken()
             if updated.machoTrapSchemaVersion != cachedVersion
-                || updated.machoScanFingerprint != cachedFingerprint {
+                || updated.machoScanFingerprint != cachedFingerprint
+                || updated.machoScanDirToken != settings.settings.machoScanDirToken {
                 settings.settings = updated
             }
         }
@@ -223,6 +252,57 @@ class PlayApp: BaseApp {
         try executable.setBinaryPosixPermissions(0o755)
         if !hasPlayTools() {
             try await PlayTools.installInIPA(executable)
+        }
+        return true
+    }
+
+    private func machoScanDirToken() -> String {
+        let manager = FileManager.default
+        let rootMod = ((try? manager.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date)?
+            .timeIntervalSince1970 ?? -1
+        let frameworksURL = url.appendingPathComponent("Frameworks")
+        let fwMod = ((try? manager.attributesOfItem(atPath: frameworksURL.path))?[.modificationDate] as? Date)?
+            .timeIntervalSince1970 ?? -1
+        let fwEntries = ((try? manager.contentsOfDirectory(atPath: frameworksURL.path)) ?? [])
+            .filter { !$0.hasPrefix(".") }
+            .sorted()
+            .joined(separator: ",")
+        return "\(rootMod):\(fwMod):\(fwEntries)"
+    }
+
+    private func cachedMachoScanStillValid(fingerprint: String, dirToken: String) -> Bool {
+        guard !fingerprint.isEmpty,
+              !dirToken.isEmpty,
+              dirToken == settings.settings.machoScanDirToken else {
+            return false
+        }
+        let tokens = fingerprint.split(separator: "|", omittingEmptySubsequences: false)
+        guard tokens.count >= 3 else { return false }
+        let expectedLibToken = "libraries:\(Macho.libraryRepairSchemaVersion):\(ProcessInfo.processInfo.operatingSystemVersionString)"
+        let expectedSDKToken = "sdk:1:\(info[string: "DTSDKName"] ?? "")"
+        guard tokens[0] == expectedLibToken, tokens[1] == expectedSDKToken else { return false }
+
+        let manager = FileManager.default
+        for token in tokens.dropFirst(2) {
+            guard let modSep = token.lastIndex(of: ":"),
+                  let sizeSep = token[..<modSep].lastIndex(of: ":") else {
+                return false
+            }
+            let relativePath = String(token[..<sizeSep])
+            let expectedSize = Int64(token[token.index(after: sizeSep)..<modSep])
+            let expectedMod = Double(token[token.index(after: modSep)...])
+            guard let expectedSize, let expectedMod else { return false }
+
+            let fileURL = relativePath.hasPrefix("/")
+                ? URL(fileURLWithPath: relativePath)
+                : url.appendingPathComponent(relativePath)
+            guard let attrs = try? manager.attributesOfItem(atPath: fileURL.path),
+                  let actualSize = (attrs[.size] as? NSNumber)?.int64Value,
+                  let actualMod = (attrs[.modificationDate] as? Date)?.timeIntervalSince1970,
+                  actualSize == expectedSize,
+                  actualMod == expectedMod else {
+                return false
+            }
         }
         return true
     }
@@ -443,10 +523,9 @@ extension PlayApp {
     func unlockKeyCover() async {
         if KeyCover.shared.isKeyCoverEnabled() {
             await KeyCover.prepareManagedPassword()
-            let keychain = KeyCover.shared.listKeychains()
-                .first(where: { $0.appBundleID == self.info.bundleIdentifier })
+            let keychain = KeyCoverKey(appBundleID: self.info.bundleIdentifier)
 
-            if let keychain = keychain, keychain.chainEncryptionStatus {
+            if keychain.chainEncryptionStatus {
                 try? await KeyCover.shared.unlockChain(keychain)
 
                 if KeyCover.shared.keyCoverPlainTextKey == nil {
@@ -475,10 +554,10 @@ extension PlayApp {
                 return
             }
 
-            let keychain = KeyCover.shared.listKeychains()
-                .first(where: { $0.appBundleID == self.info.bundleIdentifier })
+            let keychain = KeyCoverKey(appBundleID: self.info.bundleIdentifier)
 
-            if let keychain = keychain, !keychain.chainEncryptionStatus {
+            if FileManager.default.fileExists(atPath: keychain.decryptedKeyDB.path),
+               !keychain.chainEncryptionStatus {
                 try? KeyCover.shared.lockChain(keychain)
             }
         }
@@ -552,8 +631,8 @@ extension PlayApp {
         try Data().write(to: receipt, options: .atomic)
     }
 
-    func isInfoPlistSigned() throws -> Bool {
-        if let information = Entitlements.signingInformation(exec: executable) {
+    func isInfoPlistSigned(signingInfo: [String: Any]? = nil) throws -> Bool {
+        if let information = signingInfo ?? Entitlements.signingInformation(exec: executable) {
             return information[kSecCodeInfoPList as String] != nil
         }
         return try Shell.run("/usr/bin/codesign", "-dv", executable.path).contains("Info.plist entries")
@@ -568,7 +647,11 @@ extension PlayApp {
     }
 
     func clearAllCache() async {
-        Uninstaller.clearExternalCache(info.bundleIdentifier)
+        do {
+            try Uninstaller.clearExternalCache(info.bundleIdentifier)
+        } catch {
+            await MainActor.run { Log.shared.log(error.localizedDescription, isError: true) }
+        }
     }
 
     func clearPlayChain() {

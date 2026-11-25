@@ -372,6 +372,8 @@
 "settings.usageMode.help" = "低功耗应用模式会一键关闭按键映射、Discord 动态、满电/无温控伪装与防息屏，大幅降低后台唤醒与功耗；游戏模式会开启按键映射与满电/无温控伪装。";
 "settings.toggle.spoofPowerState" = "伪装满电与无温控（游戏模式）";
 "settings.toggle.spoofPowerState.help" = "向应用伪装 100% 满电、正常温度且未开启低电量模式。保持关闭可让应用遵循 macOS 低电量模式与系统温控策略以节省电量，重启应用生效。";
+"settings.toggle.blockSplashAds" = "屏蔽通用第三方开屏广告";
+"settings.toggle.blockSplashAds.help" = "通过标准无填充（No-Fill）回调短路常见第三方商业开屏广告 SDK（穿山甲、优量汇、百度、快手、TopOn/AnyThink、美数、倍孜、京东联盟、AdMob、Sigmob），不影响应用自身业务。重启应用后生效。";
 "keycover.masterPassword" = "主密码";
 "button.Enable" = "启用";
 "button.Reset" = "重置";
@@ -421,3 +423,14 @@
 "ipaLibrary.AlphabeticalSort" = "按字母顺序排列应用来源";
 "alert.install.anyway" = "仍然安装";
 "alert.open.appstore" = "打开 Mac App Store";
+
+"alert.appData.quitFirst" = "请完全退出该应用，再清除数据。";
+"alert.appData.failed" = "无法清除应用数据";
+"alert.appData.permission" = "macOS 拒绝访问应用数据。请在系统设置中为 PlayCover 开启「完全磁盘访问权限」，然后重新打开 PlayCover 并重试。";
+"alert.appData.openSettings" = "打开完全磁盘访问设置";
+"alert.appData.stillExists" = "数据仍位于 %@。请完全退出该应用后重试。";
+
+"settings.picker.deviceProfile" = "设备与布局：";
+"settings.picker.deviceProfile.systemDefault" = "系统默认（Mac Catalyst 原生）";
+"settings.picker.deviceProfile.help" = "统一选择模拟的 iOS 设备型号与对应的界面布局（iPhone Duo、iPhone、iPad 或原生 Mac Catalyst），避免机型与布局不一致。重启应用生效。";
+"settings.section.advanced" = "高级与排障选项";

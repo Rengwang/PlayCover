@@ -6,12 +6,10 @@
 //
 
 import SwiftUI
-import DataCache
 
 class KeymapViewVM: ObservableObject {
 
     public let app: PlayApp
-    public let cache = DataCache.instance
 
     @Published var selectedKeymap: URL?
     @Published var kmName = ""
