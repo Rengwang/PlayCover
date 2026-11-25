@@ -520,16 +520,29 @@ struct GraphicsView: View {
                         }
                         .frame(alignment: .leading)
                     }
-                    if #available(macOS 14.0, *),
-                       settings.info[string: "NSCameraUsageDescription"] != nil {
-                        Picker("settings.picker.cameraRotation", selection: $settings.settings.cameraRotation) {
-                            Text("settings.picker.cameraRotation.automatic").tag(-1)
-                            Text("settings.picker.cameraRotation.app").tag(-2)
-                            ForEach([0, 90, 180, 270], id: \.self) { angle in
-                                Text(verbatim: "\(angle)°").tag(angle)
+                    if settings.info[string: "NSCameraUsageDescription"] != nil {
+                        if #available(macOS 14.0, *) {
+                            Picker("settings.picker.cameraRotation", selection: $settings.settings.cameraRotation) {
+                                Text("settings.picker.cameraRotation.automatic").tag(-1)
+                                Text("settings.picker.cameraRotation.app").tag(-2)
+                                ForEach([0, 90, 180, 270], id: \.self) { angle in
+                                    Text(verbatim: "\(angle)°").tag(angle)
+                                }
                             }
+                            .help("settings.picker.cameraRotation.help")
                         }
-                        .help("settings.picker.cameraRotation.help")
+                        Picker("settings.picker.cameraFrontMirror", selection: $settings.settings.cameraFrontMirror) {
+                            Text("settings.picker.cameraMirror.automatic").tag(-1)
+                            Text("settings.picker.cameraMirror.on").tag(1)
+                            Text("settings.picker.cameraMirror.off").tag(0)
+                        }
+                        .help("settings.picker.cameraFrontMirror.help")
+                        Picker("settings.picker.cameraBackMirror", selection: $settings.settings.cameraBackMirror) {
+                            Text("settings.picker.cameraMirror.automatic").tag(-1)
+                            Text("settings.picker.cameraMirror.on").tag(1)
+                            Text("settings.picker.cameraMirror.off").tag(0)
+                        }
+                        .help("settings.picker.cameraBackMirror.help")
                     }
                     Toggle("settings.toggle.sdkShift", isOn: $settings.settings.sdkShift)
                         .help("settings.toggle.sdkShift.help")

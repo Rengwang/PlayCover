@@ -434,3 +434,10 @@
 "settings.picker.deviceProfile.systemDefault" = "系统默认（Mac Catalyst 原生）";
 "settings.picker.deviceProfile.help" = "统一选择模拟的 iOS 设备型号与对应的界面布局（iPhone Duo、iPhone、iPad 或原生 Mac Catalyst），避免机型与布局不一致。重启应用生效。";
 "settings.section.advanced" = "高级与排障选项";
+"settings.picker.cameraFrontMirror" = "前置相机预览镜像";
+"settings.picker.cameraBackMirror" = "后置相机预览镜像";
+"settings.picker.cameraMirror.automatic" = "自动";
+"settings.picker.cameraMirror.on" = "镜像";
+"settings.picker.cameraMirror.off" = "不镜像";
+"settings.picker.cameraFrontMirror.help" = "仅控制前置摄像头预览层（AVCaptureVideoPreviewLayer）的左右镜像，不会翻转拍摄照片或扫码/OCR 视频帧。默认「自动」保持应用原有行为，重启应用后生效。";
+"settings.picker.cameraBackMirror.help" = "仅控制后置摄像头预览层（AVCaptureVideoPreviewLayer）的左右镜像，不会翻转拍摄照片或扫码/OCR 视频帧。默认「自动」保持应用原有行为，重启应用后生效。";
