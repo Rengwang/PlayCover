@@ -75,6 +75,11 @@ struct MainView: View {
                                 }
                             }
                         }
+                        NavigationLink(tag: 3, selection: $selectedView) {
+                            FeatureManagerView()
+                        } label: {
+                            Label("sidebar.featureManager", systemImage: "switch.2")
+                        }
                     }
                     .frame(minWidth: 150)
                     .toolbar {
