@@ -168,6 +168,8 @@
 "settings.toggle.autoKM.help" = "Automatically disable keymapping when text input is sensed";
 "settings.toggle.enableScrollWheel" = "Enable Scroll Wheel";
 "settings.toggle.enableScrollWheel.help" = "Enable scroll wheel in keymapping";
+"settings.toggle.optionScrollZoom" = "Option + Scroll to Zoom";
+"settings.toggle.optionScrollZoom.help" = "Hold Option and scroll the mouse wheel to perform two-finger pinch zoom (useful for maps and photos).";
 "settings.toggle.disableBuiltinMouse" = "Disable Built-in Mouse Support";
 "settings.toggle.disableBuiltinMouse.help" = "Disable the app’s built-in mouse support to avoid click conflicts.";
 
@@ -469,6 +471,8 @@
 "featureManager.feature.noKMOnInput.desc" = "Temporarily pause keymapping while typing into text fields.";
 "featureManager.feature.enableScrollWheel.title" = "Enable Scroll Wheel";
 "featureManager.feature.enableScrollWheel.desc" = "Allow mouse scroll wheel input inside the app.";
+"featureManager.feature.optionScrollZoom.title" = "Option + Scroll to Zoom";
+"featureManager.feature.optionScrollZoom.desc" = "Hold Option and scroll the mouse wheel to pinch-zoom inside apps.";
 "featureManager.feature.disableBuiltinMouse.title" = "Disable Built-in Mouse";
 "featureManager.feature.disableBuiltinMouse.desc" = "Disable PlayTools built-in mouse input handling.";
 "featureManager.feature.disableTimeout.title" = "Disable Display Sleep";

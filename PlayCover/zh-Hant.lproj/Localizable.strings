@@ -355,6 +355,8 @@
 "settings.toggle.enableScrollWheel.help" = "在鍵盤映射中啟用滾輪";
 "settings.toggle.iosFrameworks.help" = "將系統 ios 庫新增至應用程式。 已知修復某些應用程式找不到 ios 框架的問題";
 "settings.toggle.enableScrollWheel" = "啟用滾輪";
+"settings.toggle.optionScrollZoom" = "Option + 滾輪縮放";
+"settings.toggle.optionScrollZoom.help" = "按住 Option 鍵並捲動滑鼠滾輪以模擬雙指捏合縮放（適合地圖與圖片瀏覽）。";
 "ipaLibrary.info.notAvailable" = "Link not valid for this app";
 "ipaLibrary.info" = "App Info";
 "ipaLibrary.info.checksum.none" = "None provided";
@@ -465,6 +467,8 @@
 "featureManager.feature.noKMOnInput.desc" = "於文字欄位輸入時自動暫停按鍵映射。";
 "featureManager.feature.enableScrollWheel.title" = "滾輪支援";
 "featureManager.feature.enableScrollWheel.desc" = "允許在應用程式內使用滑鼠滾輪捲動。";
+"featureManager.feature.optionScrollZoom.title" = "Option + 滾輪縮放";
+"featureManager.feature.optionScrollZoom.desc" = "按住 Option 鍵並捲動滑鼠滾輪，在應用程式內進行雙指捏合縮放。";
 "featureManager.feature.disableBuiltinMouse.title" = "停用內建滑鼠";
 "featureManager.feature.disableBuiltinMouse.desc" = "停用 PlayTools 內建的滑鼠輸入處理。";
 "featureManager.feature.disableTimeout.title" = "防止螢幕休眠";

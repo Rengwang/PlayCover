@@ -56,6 +56,7 @@ private enum ManagedFeatureSection: String, CaseIterable, Identifiable {
                 .toggle(.keymapping),
                 .toggle(.noKMOnInput),
                 .toggle(.enableScrollWheel),
+                .toggle(.optionScrollZoom),
                 .toggle(.disableBuiltinMouse)
             ]
         case .compatibilitySystem:
@@ -399,6 +400,7 @@ private enum ManagedToggleFeature: String, CaseIterable, Identifiable {
     case keymapping
     case noKMOnInput
     case enableScrollWheel
+    case optionScrollZoom
     case disableBuiltinMouse
     case disableTimeout
     case playChain
@@ -425,6 +427,7 @@ private enum ManagedToggleFeature: String, CaseIterable, Identifiable {
         case .keymapping: return "keyboard"
         case .noKMOnInput: return "text.cursor"
         case .enableScrollWheel: return "arrow.up.arrow.down"
+        case .optionScrollZoom: return "plus.magnifyingglass"
         case .disableBuiltinMouse: return "magicmouse.fill"
         case .disableTimeout: return "sun.max.fill"
         case .playChain: return "key.fill"
@@ -449,6 +452,7 @@ private enum ManagedToggleFeature: String, CaseIterable, Identifiable {
         case .keymapping: return .purple
         case .noKMOnInput: return .teal
         case .enableScrollWheel: return .cyan
+        case .optionScrollZoom: return .blue
         case .disableBuiltinMouse: return .orange
         case .disableTimeout: return .yellow
         case .playChain: return .orange
@@ -473,6 +477,7 @@ private enum ManagedToggleFeature: String, CaseIterable, Identifiable {
         case .keymapping: return \.keymapping
         case .noKMOnInput: return \.noKMOnInput
         case .enableScrollWheel: return \.enableScrollWheel
+        case .optionScrollZoom: return \.optionScrollZoom
         case .disableBuiltinMouse: return \.disableBuiltinMouse
         case .disableTimeout: return \.disableTimeout
         case .playChain: return \.playChain

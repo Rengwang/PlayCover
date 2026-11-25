@@ -412,6 +412,8 @@
 "settings.toggle.enableScrollWheel.help" = "在按键映射启用滚轮";
 "settings.toggle.iosFrameworks.help" = "将系统 ios 库添加到应用程序中。已知可修复某些应用程序找不到 ios 框架的问题";
 "settings.toggle.enableScrollWheel" = "启用滚轮";
+"settings.toggle.optionScrollZoom" = "Option + 滚轮缩放";
+"settings.toggle.optionScrollZoom.help" = "按住 Option 键并滚动鼠标滚轮以模拟双指捏合缩放（适合地图与图片浏览）。";
 "ipaLibrary.info.notAvailable" = "此应用链接不可用";
 "ipaLibrary.info" = "应用信息";
 "ipaLibrary.info.checksum.none" = "未提供";
@@ -512,6 +514,8 @@
 "featureManager.feature.noKMOnInput.desc" = "在文本框输入文字时自动暂停按键映射。";
 "featureManager.feature.enableScrollWheel.title" = "滚轮支持";
 "featureManager.feature.enableScrollWheel.desc" = "允许在应用内使用鼠标滚轮进行滚动操作。";
+"featureManager.feature.optionScrollZoom.title" = "Option + 滚轮缩放";
+"featureManager.feature.optionScrollZoom.desc" = "按住 Option 键并滚动鼠标滚轮，在应用内进行双指捏合缩放。";
 "featureManager.feature.disableBuiltinMouse.title" = "禁用内置鼠标";
 "featureManager.feature.disableBuiltinMouse.desc" = "禁用 PlayTools 内置的鼠标事件处理。";
 "featureManager.feature.disableTimeout.title" = "防止息屏超时";
