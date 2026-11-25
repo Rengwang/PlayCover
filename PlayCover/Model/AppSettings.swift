@@ -61,6 +61,10 @@ struct AppSettingsData: Codable {
     var cameraBackMirror = -1
     var spoofPowerState = false
     var blockSplashAds = true
+    var mockLocationEnabled = false
+    var mockLocationLatitude: Double = 39.9042
+    var mockLocationLongitude: Double = 116.4074
+    var mockLocationName: String = "Beijing"
     /// Cached result of the anti-tamper scan: matcher version + per-binary fingerprint.
     var machoTrapSchemaVersion = 0
     var machoScanFingerprint = ""
@@ -118,6 +122,10 @@ struct AppSettingsData: Codable {
         cameraBackMirror = try container.decodeIfPresent(Int.self, forKey: .cameraBackMirror) ?? -1
         spoofPowerState = try container.decodeIfPresent(Bool.self, forKey: .spoofPowerState) ?? false
         blockSplashAds = try container.decodeIfPresent(Bool.self, forKey: .blockSplashAds) ?? true
+        mockLocationEnabled = try container.decodeIfPresent(Bool.self, forKey: .mockLocationEnabled) ?? false
+        mockLocationLatitude = try container.decodeIfPresent(Double.self, forKey: .mockLocationLatitude) ?? 39.9042
+        mockLocationLongitude = try container.decodeIfPresent(Double.self, forKey: .mockLocationLongitude) ?? 116.4074
+        mockLocationName = try container.decodeIfPresent(String.self, forKey: .mockLocationName) ?? "Beijing"
         machoTrapSchemaVersion = try container.decodeIfPresent(Int.self,
                                                                forKey: .machoTrapSchemaVersion) ?? 0
         machoScanFingerprint = try container.decodeIfPresent(String.self,

@@ -753,6 +753,7 @@ struct MiscView: View {
     @Binding var task: BlockingTask
     @AppStorage("settings.customPluginsWarningShown") private var hasShownCustomPluginWarning = false
     @State var showPopover = false
+    @State private var showLocationPicker = false
     @State private var userDylibs: [URL] = []
     @State private var showCustomPluginWarning = false
     var app: PlayApp
@@ -805,6 +806,27 @@ struct MiscView: View {
                         .disabled(!(hasPlayTools ?? true))
                         .help("settings.toggle.spoofPowerState.help")
                     Spacer()
+                }
+                HStack {
+                    Toggle("settings.toggle.mockLocation",
+                           isOn: $settings.settings.mockLocationEnabled)
+                        .disabled(!(hasPlayTools ?? true))
+                        .help("settings.toggle.mockLocation.help")
+                    Spacer()
+                    if settings.settings.mockLocationEnabled {
+                        Text(String(format: "%@ (%.4f, %.4f)",
+                                    settings.settings.mockLocationName,
+                                    settings.settings.mockLocationLatitude,
+                                    settings.settings.mockLocationLongitude))
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Button("settings.button.pickLocation") {
+                            showLocationPicker = true
+                        }
+                        .sheet(isPresented: $showLocationPicker) {
+                            LocationPickerView(settings: $settings)
+                        }
+                    }
                 }
                 HStack {
                     Toggle("settings.toggle.discord", isOn: $settings.settings.discordActivity.enable)

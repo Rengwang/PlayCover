@@ -441,3 +441,15 @@
 "settings.picker.cameraMirror.off" = "不镜像";
 "settings.picker.cameraFrontMirror.help" = "仅控制前置摄像头预览层（AVCaptureVideoPreviewLayer）的左右镜像，不会翻转拍摄照片或扫码/OCR 视频帧。默认「自动」保持应用原有行为，重启应用后生效。";
 "settings.picker.cameraBackMirror.help" = "仅控制后置摄像头预览层（AVCaptureVideoPreviewLayer）的左右镜像，不会翻转拍摄照片或扫码/OCR 视频帧。默认「自动」保持应用原有行为，重启应用后生效。";
+"settings.toggle.mockLocation" = "模拟 GPS 定位";
+"settings.toggle.mockLocation.help" = "为此应用提供虚拟定位坐标，覆盖系统定位。重启应用生效。";
+"settings.button.pickLocation" = "在地图上选点…";
+"settings.location.title" = "模拟定位设置";
+"settings.location.searchPlaceholder" = "搜索城市或地点（如：北京、纽约、上海陆家嘴）";
+"settings.location.searchButton" = "搜索";
+"settings.location.latitude" = "纬度";
+"settings.location.longitude" = "经度";
+"settings.location.chinaShift" = "中国大陆坐标自动纠偏（GCJ-02 ↔ WGS-84）";
+"settings.location.chinaShift.help" = "自动在苹果中国地图（火星坐标）与 iOS 底层 GPS（WGS-84）间互转，确保高德/美团等国内应用定位精准不偏移。";
+"settings.location.done" = "确定";
+"settings.location.cancel" = "取消";
