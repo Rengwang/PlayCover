@@ -305,6 +305,10 @@ struct GraphicsView: View {
         settings.settings.resolution == 6 || settings.settings.resolution == 7
     }
 
+    private var isDuoLayout: Bool {
+        settings.settings.layoutIdiom == 3
+    }
+
     private var deviceProfileBinding: Binding<DeviceLayoutProfile> {
         Binding(
             get: { DeviceLayoutProfile.from(settings.settings) },
@@ -340,6 +344,17 @@ struct GraphicsView: View {
                     }
                     .frame(width: 250)
                     .help("settings.picker.deviceProfile.help")
+                }
+                HStack(spacing: 6) {
+                    Toggle("settings.toggle.duoVerticalBar", isOn: $settings.settings.duoVerticalBar)
+                        .help("settings.toggle.duoVerticalBar.help")
+                        .disabled(!isDuoLayout)
+                    if !isDuoLayout {
+                        Text("settings.toggle.duoVerticalBar.duoOnly")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
                 }
                 HStack {
                     if showResolutionWarning {

@@ -369,6 +369,9 @@
 "ipaLibrary.AlphabeticalSort" = "Sort source apps alphabetically";
 "alert.install.anyway" = "Install Anyway";
 "settings.toggle.sdkShift" = "SDK Shift（強制解鎖自由自適應縮放）";
+"settings.toggle.duoVerticalBar" = "Duo 右側豎欄";
+"settings.toggle.duoVerticalBar.duoOnly" = "（僅 iPhone Duo 佈局生效）";
+"settings.toggle.duoVerticalBar.help" = "在 iPhone Duo 佈局下啟用右側豎欄，支援返回鍵、應用程式自訂側欄與底欄直排（不含虛擬狀態列）。重新啟動應用程式後生效。";
 "settings.toggle.nativePlatform" = "使用原生 Mac Catalyst 平台";
 "settings.toggle.nativePlatform.help" = "讓應用程式使用系統實際的 Mac Catalyst 平台身分判斷 API 是否可用。重新啟動應用程式後生效。";
 "settings.toggle.sdkShift.help" = "參考 SDKShift for Duo 思路：執行時向應用程式提供高版本 Duo SDK（iOS 27.2）標記並解除全螢幕/固定比例鎖定，使原本固定比例的視窗可自由調整大小（重啟應用程式生效）。";
@@ -427,6 +430,8 @@
 "featureManager.section.compatibilitySystem" = "相容與系統";
 "featureManager.feature.layoutIdiom.title" = "佈局模式";
 "featureManager.feature.layoutIdiom.desc" = "統一設定應用程式的介面佈局模式（自動 iPhone Duo、iPhone、iPad 或跟隨應用程式）。";
+"featureManager.feature.duoVerticalBar.title" = "Duo 右側豎欄";
+"featureManager.feature.duoVerticalBar.desc" = "在 iPhone Duo 佈局下啟用右側豎欄，支援返回鍵、應用程式自訂側欄與底欄直排（不含虛擬狀態列）。";
 "featureManager.feature.resolution.title" = "視窗與顯示模式";
 "featureManager.feature.resolution.desc" = "設定智慧適配、動態視窗自由縮放或固定解析度顯示模式。";
 "featureManager.feature.uiScale.title" = "介面縮放";

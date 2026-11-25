@@ -218,6 +218,9 @@
 "settings.picker.layoutIdiom.duo" = "iPhone Duo Layout";
 "settings.picker.layoutIdiom.pad" = "iPad Layout";
 "settings.picker.layoutIdiom.help" = "Force Universal iOS apps (like Bilibili) to use their iPhone, iPhone Duo (foldable wide), or iPad UI layout and matching device type. Restart app to apply.";
+"settings.toggle.duoVerticalBar" = "Duo Vertical Bar";
+"settings.toggle.duoVerticalBar.duoOnly" = "(iPhone Duo layout only)";
+"settings.toggle.duoVerticalBar.help" = "Enable the right-edge vertical bar in iPhone Duo layout for back navigation, app custom side tools, and vertical dock/toolbar relocation (without a virtual phone status bar). Restart app to apply.";
 "settings.toggle.sdkShift" = "SDK Shift (Unlock Free Resizing for Duo)";
 "settings.toggle.nativePlatform" = "Use the native Mac Catalyst platform";
 "settings.toggle.nativePlatform.help" = "Use the system’s Mac Catalyst identity for API availability checks. Restart the app to apply.";
@@ -431,6 +434,8 @@
 "featureManager.section.compatibilitySystem" = "Compatibility & System";
 "featureManager.feature.layoutIdiom.title" = "Layout Mode";
 "featureManager.feature.layoutIdiom.desc" = "Choose the simulated UI idiom (Auto iPhone Duo, iPhone, iPad, or Follow App).";
+"featureManager.feature.duoVerticalBar.title" = "Duo Vertical Bar";
+"featureManager.feature.duoVerticalBar.desc" = "Enable the right-edge vertical bar in iPhone Duo layout (back button, custom sidebars, and vertical dock; no virtual status bar).";
 "featureManager.feature.resolution.title" = "Display Mode";
 "featureManager.feature.resolution.desc" = "Configure window sizing and resolution mode (Smart Adapt, Dynamic Window, or fixed).";
 "featureManager.feature.uiScale.title" = "UI Scale";

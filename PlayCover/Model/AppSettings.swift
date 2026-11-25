@@ -55,6 +55,7 @@ struct AppSettingsData: Codable {
     var ignoreUnityKeyboardInitializationError = false
     var uiScale: Double = 1.0
     var layoutIdiom: Int = 3
+    var duoVerticalBar = false
     var sdkShift = false
     var useNativePlatform = false
     var cameraRotation = -1
@@ -117,6 +118,7 @@ struct AppSettingsData: Codable {
         let decodedUIScale = try container.decodeIfPresent(Double.self, forKey: .uiScale) ?? 1.0
         uiScale = decodedUIScale <= 0.0 ? 1.0 : decodedUIScale
         layoutIdiom = try container.decodeIfPresent(Int.self, forKey: .layoutIdiom) ?? 3
+        duoVerticalBar = try container.decodeIfPresent(Bool.self, forKey: .duoVerticalBar) ?? false
         sdkShift = try container.decodeIfPresent(Bool.self, forKey: .sdkShift) ?? false
         useNativePlatform = try container.decodeIfPresent(Bool.self, forKey: .useNativePlatform) ?? false
         cameraRotation = try container.decodeIfPresent(Int.self, forKey: .cameraRotation) ?? -1

@@ -30,6 +30,7 @@ private enum ManagedFeatureSection: String, CaseIterable, Identifiable {
         case .layoutDisplay:
             return [
                 .picker(.layoutIdiom),
+                .toggle(.duoVerticalBar),
                 .picker(.resolution),
                 .picker(.uiScale),
                 .picker(.displayRotation),
@@ -393,6 +394,7 @@ private enum ManagedPickerFeature: String, CaseIterable, Identifiable {
 }
 
 private enum ManagedToggleFeature: String, CaseIterable, Identifiable {
+    case duoVerticalBar
     case hideTitleBar
     case blockSplashAds
     case mockLocationEnabled
@@ -420,6 +422,7 @@ private enum ManagedToggleFeature: String, CaseIterable, Identifiable {
 
     var symbolName: String {
         switch self {
+        case .duoVerticalBar: return "sidebar.right"
         case .hideTitleBar: return "macwindow"
         case .blockSplashAds: return "hand.raised.fill"
         case .mockLocationEnabled: return "location.fill"
@@ -445,6 +448,7 @@ private enum ManagedToggleFeature: String, CaseIterable, Identifiable {
 
     var badgeColor: Color {
         switch self {
+        case .duoVerticalBar: return .teal
         case .hideTitleBar: return .blue
         case .blockSplashAds: return .red
         case .mockLocationEnabled: return .blue
@@ -470,6 +474,7 @@ private enum ManagedToggleFeature: String, CaseIterable, Identifiable {
 
     var keyPath: WritableKeyPath<AppSettingsData, Bool> {
         switch self {
+        case .duoVerticalBar: return \.duoVerticalBar
         case .hideTitleBar: return \.hideTitleBar
         case .blockSplashAds: return \.blockSplashAds
         case .mockLocationEnabled: return \.mockLocationEnabled

@@ -358,6 +358,9 @@
 "settings.picker.layoutIdiom.duo" = "iPhone Duo 布局 (折叠屏宽窗)";
 "settings.picker.layoutIdiom.pad" = "iPad 布局 (iPad)";
 "settings.picker.layoutIdiom.help" = "为通用 iOS 应用（如 B 站等同时包含手机、iPhone Duo 和 iPad 多套界面的软件）强制指定布局与对应设备身份，重启应用生效。";
+"settings.toggle.duoVerticalBar" = "Duo 右侧竖栏";
+"settings.toggle.duoVerticalBar.duoOnly" = "（仅 iPhone Duo 布局生效）";
+"settings.toggle.duoVerticalBar.help" = "在 iPhone Duo 布局下启用右侧竖栏，支持返回键、应用自定义侧栏与底栏竖排（不含虚拟状态栏）。重启应用后生效。";
 "settings.toggle.sdkShift" = "SDK Shift（强制解锁自由自适应缩放）";
 "settings.toggle.nativePlatform" = "使用原生 Mac Catalyst 平台";
 "settings.toggle.nativePlatform.help" = "让应用使用系统真实的 Mac Catalyst 平台身份判断 API 是否可用。重启应用后生效。";
@@ -474,6 +477,8 @@
 "featureManager.section.compatibilitySystem" = "兼容与系统";
 "featureManager.feature.layoutIdiom.title" = "布局模式";
 "featureManager.feature.layoutIdiom.desc" = "统一设置应用的界面布局模式（自动 iPhone Duo、iPhone、iPad 或跟随应用）。";
+"featureManager.feature.duoVerticalBar.title" = "Duo 右侧竖栏";
+"featureManager.feature.duoVerticalBar.desc" = "在 iPhone Duo 布局下启用右侧竖栏，支持返回键、应用自定义侧栏与底栏竖排（不含虚拟状态栏）。";
 "featureManager.feature.resolution.title" = "窗口与显示模式";
 "featureManager.feature.resolution.desc" = "配置智能自适应、动态窗口自由缩放或固定分辨率显示模式。";
 "featureManager.feature.uiScale.title" = "界面缩放";
