@@ -1107,14 +1107,26 @@ private struct EfficiencySettingsView: View {
                 Spacer()
                 Picker("", selection: $settings.settings.frameRateCap) {
                     Text("settings.picker.frameRateCap.0").tag(0)
+                    Text("settings.picker.frameRateCap.adaptive").tag(-1)
                     Text(verbatim: "60 FPS").tag(60)
+                    Text(verbatim: "45 FPS").tag(45)
+                    Text(verbatim: "40 FPS").tag(40)
                     Text(verbatim: "30 FPS").tag(30)
+                    Text(verbatim: "20 FPS").tag(20)
+                    Text(verbatim: "10 FPS").tag(10)
                 }
                 .labelsHidden()
                 .frame(width: 225)
             }
             .disabled(!(hasPlayTools ?? true))
             .help("settings.picker.frameRateCap.help")
+            HStack {
+                Toggle("settings.toggle.fpsOverlay",
+                       isOn: $settings.settings.fpsOverlay)
+                    .disabled(!(hasPlayTools ?? true))
+                    .help("settings.toggle.fpsOverlay.help")
+                Spacer()
+            }
             HStack {
                 Toggle("settings.toggle.metalMemorySaver",
                        isOn: $settings.settings.metalMemorySaver)

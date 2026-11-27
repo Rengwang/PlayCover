@@ -85,6 +85,7 @@ struct AppSettingsData: Codable {
         }
     }
     var frameRateCap: Int = 0
+    var fpsOverlay: Bool = false
     var metalMemorySaver: Bool = false
     var avMediaSaver: Bool = false
     var blockSplashAds = true
@@ -162,7 +163,8 @@ struct AppSettingsData: Codable {
         powerSavingMode = try container.decodeIfPresent(Bool.self, forKey: .powerSavingMode) ?? false
         memorySavingMode = try container.decodeIfPresent(Bool.self, forKey: .memorySavingMode) ?? false
         let decodedFrameRateCap = try container.decodeIfPresent(Int.self, forKey: .frameRateCap) ?? 0
-        frameRateCap = [0, 30, 60].contains(decodedFrameRateCap) ? decodedFrameRateCap : 0
+        frameRateCap = [-1, 0, 10, 20, 30, 40, 45, 60].contains(decodedFrameRateCap) ? decodedFrameRateCap : 0
+        fpsOverlay = try container.decodeIfPresent(Bool.self, forKey: .fpsOverlay) ?? false
         metalMemorySaver = try container.decodeIfPresent(Bool.self, forKey: .metalMemorySaver) ?? false
         avMediaSaver = try container.decodeIfPresent(Bool.self, forKey: .avMediaSaver) ?? false
         blockSplashAds = try container.decodeIfPresent(Bool.self, forKey: .blockSplashAds) ?? true

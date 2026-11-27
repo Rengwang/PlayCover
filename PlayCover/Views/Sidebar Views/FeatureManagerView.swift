@@ -48,6 +48,7 @@ private enum ManagedFeatureSection: String, CaseIterable, Identifiable {
                 .toggle(.memorySavingMode),
                 .picker(.powerStatePolicy),
                 .picker(.frameRateCap),
+                .toggle(.fpsOverlay),
                 .toggle(.metalMemorySaver),
                 .toggle(.avMediaSaver)
             ]
@@ -276,9 +277,14 @@ private enum ManagedPickerFeature: String, CaseIterable, Identifiable {
             ]
         case .frameRateCap:
             return [
-                ManagedPickerOption(id: "0", labelKey: "featureManager.option.frameRateCap.0"),
+                ManagedPickerOption(id: "-1", labelKey: "featureManager.option.frameRateCap.adaptive"),
+                ManagedPickerOption(id: "0", labelKey: "settings.picker.frameRateCap.0"),
                 ManagedPickerOption(id: "60", literal: "60 FPS"),
-                ManagedPickerOption(id: "30", literal: "30 FPS")
+                ManagedPickerOption(id: "45", literal: "45 FPS"),
+                ManagedPickerOption(id: "40", literal: "40 FPS"),
+                ManagedPickerOption(id: "30", literal: "30 FPS"),
+                ManagedPickerOption(id: "20", literal: "20 FPS"),
+                ManagedPickerOption(id: "10", literal: "10 FPS")
             ]
         case .cameraRotation:
             return [
@@ -451,6 +457,7 @@ private enum ManagedToggleFeature: String, CaseIterable, Identifiable {
     case hideTitleBar
     case powerSavingMode
     case memorySavingMode
+    case fpsOverlay
     case metalMemorySaver
     case avMediaSaver
     case blockSplashAds
@@ -483,6 +490,7 @@ private enum ManagedToggleFeature: String, CaseIterable, Identifiable {
         case .hideTitleBar: return "macwindow"
         case .powerSavingMode: return "leaf.fill"
         case .memorySavingMode: return "memorychip"
+        case .fpsOverlay: return "timer"
         case .metalMemorySaver: return "square.stack.3d.up.fill"
         case .avMediaSaver: return "play.rectangle.fill"
         case .blockSplashAds: return "hand.raised.fill"
@@ -513,6 +521,7 @@ private enum ManagedToggleFeature: String, CaseIterable, Identifiable {
         case .hideTitleBar: return .blue
         case .powerSavingMode: return .green
         case .memorySavingMode: return .teal
+        case .fpsOverlay: return .cyan
         case .metalMemorySaver: return .indigo
         case .avMediaSaver: return .orange
         case .blockSplashAds: return .red
@@ -543,6 +552,7 @@ private enum ManagedToggleFeature: String, CaseIterable, Identifiable {
         case .hideTitleBar: return \.hideTitleBar
         case .powerSavingMode: return \.powerSavingMode
         case .memorySavingMode: return \.memorySavingMode
+        case .fpsOverlay: return \.fpsOverlay
         case .metalMemorySaver: return \.metalMemorySaver
         case .avMediaSaver: return \.avMediaSaver
         case .blockSplashAds: return \.blockSplashAds

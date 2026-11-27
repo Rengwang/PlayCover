@@ -392,7 +392,10 @@
 "settings.toggle.memorySavingMode.help" = "限制无上限的 NSCache/NSURLCache 内存占用、精简 Metal/图层后备缓存，并在内存压力或窗口隐藏时主动回收内存。重启应用生效。";
 "settings.picker.frameRateCap" = "帧率上限";
 "settings.picker.frameRateCap.0" = "无限制";
-"settings.picker.frameRateCap.help" = "限制 CADisplayLink 与 MTKView 的最高刷新率，以降低 GPU 功耗与发热。重启应用生效。";
+"settings.picker.frameRateCap.adaptive" = "自适应 (静止最低 1 FPS)";
+"settings.picker.frameRateCap.help" = "限制 CADisplayLink 与 MTKView 的最高刷新率（10–60 FPS），或选择自适应模式（静置自动降至 10/1 FPS、操作瞬间恢复 60 FPS，音视频播放时保持 30 FPS 下限）以大幅降低 GPU 功耗与发热。重启应用生效。";
+"settings.toggle.fpsOverlay" = "帧率显示";
+"settings.toggle.fpsOverlay.help" = "在应用窗口左上角显示轻量级实时帧率悬浮胶囊（含自适应静止/媒体状态与 Metal 绘制帧率），不遮挡点击。重启应用生效。";
 "settings.toggle.metalMemorySaver" = "Metal 显存优化";
 "settings.toggle.metalMemorySaver.help" = "限制 Metal 可绘制缓冲数量、禁用广色域高动态后备缓冲，并在窗口被遮挡时释放 MTKView 可绘制对象。重启应用生效。";
 "settings.toggle.avMediaSaver" = "音视频节能";
@@ -576,8 +579,11 @@
 "featureManager.option.powerStatePolicy.1" = "高性能伪装";
 "featureManager.option.powerStatePolicy.2" = "低电量模式";
 "featureManager.feature.frameRateCap.title" = "帧率上限";
-"featureManager.feature.frameRateCap.desc" = "限制 CADisplayLink 与 MTKView 的最高刷新率以降低功耗与发热。";
+"featureManager.feature.frameRateCap.desc" = "设置固定帧率上限（10–60 FPS）或自适应模式（静置 10/1 FPS、操作恢复 60 FPS、播放媒体保护 30 FPS）。";
 "featureManager.option.frameRateCap.0" = "无限制";
+"featureManager.option.frameRateCap.adaptive" = "自适应 (静止最低 1 FPS)";
+"featureManager.feature.fpsOverlay.title" = "帧率显示";
+"featureManager.feature.fpsOverlay.desc" = "在应用窗口左上角显示轻量级实时 FPS 悬浮胶囊。";
 "featureManager.feature.metalMemorySaver.title" = "Metal 显存优化";
 "featureManager.feature.metalMemorySaver.desc" = "限制 Metal 可绘制缓冲、禁用广色域高动态缓冲，并在遮挡时释放 MTKView。";
 "featureManager.feature.avMediaSaver.title" = "音视频节能";

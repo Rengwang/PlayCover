@@ -331,7 +331,10 @@
 "settings.toggle.memorySavingMode.help" = "Cap unbounded NSCache/NSURLCache memory usage, trim Metal/backing drawables, and proactively reclaim memory under pressure or when hidden. Restart app to apply.";
 "settings.picker.frameRateCap" = "Frame Rate Cap";
 "settings.picker.frameRateCap.0" = "Unlimited";
-"settings.picker.frameRateCap.help" = "Cap CADisplayLink and MTKView refresh rates to reduce GPU power draw and heat. Restart app to apply.";
+"settings.picker.frameRateCap.adaptive" = "Adaptive (1–60 FPS)";
+"settings.picker.frameRateCap.help" = "Cap CADisplayLink and MTKView refresh rates (10–60 FPS) or use Adaptive mode (drops to 10/1 FPS when idle, wakes to 60 FPS on input, and keeps 30 FPS during active media playback) to reduce GPU power draw and heat. Restart app to apply.";
+"settings.toggle.fpsOverlay" = "FPS Overlay";
+"settings.toggle.fpsOverlay.help" = "Show a lightweight floating FPS pill in the top-left corner of the app window (including adaptive idle/media status and Metal drawable rate). Restart app to apply.";
 "settings.toggle.metalMemorySaver" = "Metal Memory Saver";
 "settings.toggle.metalMemorySaver.help" = "Limit Metal drawable count, disable extended dynamic range backing stores, and release MTKView drawables while occluded. Restart app to apply.";
 "settings.toggle.avMediaSaver" = "AV Media Saver";
@@ -530,8 +533,11 @@
 "featureManager.option.powerStatePolicy.1" = "High Perf Spoof";
 "featureManager.option.powerStatePolicy.2" = "Low Power Mode";
 "featureManager.feature.frameRateCap.title" = "Frame Rate Cap";
-"featureManager.feature.frameRateCap.desc" = "Cap CADisplayLink and MTKView maximum frame rate to save power and reduce heat.";
+"featureManager.feature.frameRateCap.desc" = "Cap refresh rate (10–60 FPS) or enable Adaptive mode (10/1 FPS idle, 60 FPS on input, 30 FPS media protection).";
 "featureManager.option.frameRateCap.0" = "Unlimited";
+"featureManager.option.frameRateCap.adaptive" = "Adaptive (1–60 FPS)";
+"featureManager.feature.fpsOverlay.title" = "FPS Overlay";
+"featureManager.feature.fpsOverlay.desc" = "Display a lightweight live FPS pill in the top-left corner of the app window.";
 "featureManager.feature.metalMemorySaver.title" = "Metal Memory Saver";
 "featureManager.feature.metalMemorySaver.desc" = "Limit Metal drawables, disable EDR backing stores, and release occluded MTKView drawables.";
 "featureManager.feature.avMediaSaver.title" = "AV Media Saver";
