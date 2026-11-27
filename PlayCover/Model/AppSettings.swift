@@ -43,6 +43,7 @@ struct AppSettingsData: Codable {
     var noKMOnInput = true
     var enableScrollWheel = true
     var optionScrollZoom = true
+    var touchAlternatives = true
     var hideTitleBar = true
     var floatingWindow = false
     var checkMicPermissionSync = false
@@ -54,6 +55,7 @@ struct AppSettingsData: Codable {
     var blockSleepSpamming = false
     var ignoreUnityKeyboardInitializationError = false
     var uiScale: Double = 1.0
+    var appearanceStyle: Int = 0
     var layoutIdiom: Int = 3
     var duoVerticalBar = false
     var sdkShift = false
@@ -61,7 +63,30 @@ struct AppSettingsData: Codable {
     var cameraRotation = -1
     var cameraFrontMirror = -1
     var cameraBackMirror = -1
-    var spoofPowerState = false
+    var spoofPowerState = false {
+        didSet {
+            if spoofPowerState {
+                if powerStatePolicy != 1 {
+                    powerStatePolicy = 1
+                }
+            } else if powerStatePolicy == 1 {
+                powerStatePolicy = 0
+            }
+        }
+    }
+    var powerSavingMode: Bool = false
+    var memorySavingMode: Bool = false
+    var powerStatePolicy: Int = 0 {
+        didSet {
+            let legacySpoof = (powerStatePolicy == 1)
+            if spoofPowerState != legacySpoof {
+                spoofPowerState = legacySpoof
+            }
+        }
+    }
+    var frameRateCap: Int = 0
+    var metalMemorySaver: Bool = false
+    var avMediaSaver: Bool = false
     var blockSplashAds = true
     var mockLocationEnabled = false
     var mockLocationLatitude: Double = 39.9042
@@ -103,6 +128,7 @@ struct AppSettingsData: Codable {
         noKMOnInput = try container.decodeIfPresent(Bool.self, forKey: .noKMOnInput) ?? true
         enableScrollWheel = try container.decodeIfPresent(Bool.self, forKey: .enableScrollWheel) ?? true
         optionScrollZoom = try container.decodeIfPresent(Bool.self, forKey: .optionScrollZoom) ?? true
+        touchAlternatives = try container.decodeIfPresent(Bool.self, forKey: .touchAlternatives) ?? true
         hideTitleBar = try container.decodeIfPresent(Bool.self, forKey: .hideTitleBar) ?? true
         floatingWindow = try container.decodeIfPresent(Bool.self, forKey: .floatingWindow) ?? false
         checkMicPermissionSync = try container.decodeIfPresent(Bool.self, forKey: .checkMicPermissionSync) ?? false
@@ -117,6 +143,8 @@ struct AppSettingsData: Codable {
             Bool.self, forKey: .ignoreUnityKeyboardInitializationError) ?? false
         let decodedUIScale = try container.decodeIfPresent(Double.self, forKey: .uiScale) ?? 1.0
         uiScale = decodedUIScale <= 0.0 ? 1.0 : decodedUIScale
+        let decodedAppearanceStyle = try container.decodeIfPresent(Int.self, forKey: .appearanceStyle) ?? 0
+        appearanceStyle = (0...2).contains(decodedAppearanceStyle) ? decodedAppearanceStyle : 0
         layoutIdiom = try container.decodeIfPresent(Int.self, forKey: .layoutIdiom) ?? 3
         duoVerticalBar = try container.decodeIfPresent(Bool.self, forKey: .duoVerticalBar) ?? false
         sdkShift = try container.decodeIfPresent(Bool.self, forKey: .sdkShift) ?? false
@@ -124,7 +152,19 @@ struct AppSettingsData: Codable {
         cameraRotation = try container.decodeIfPresent(Int.self, forKey: .cameraRotation) ?? -1
         cameraFrontMirror = try container.decodeIfPresent(Int.self, forKey: .cameraFrontMirror) ?? -1
         cameraBackMirror = try container.decodeIfPresent(Int.self, forKey: .cameraBackMirror) ?? -1
-        spoofPowerState = try container.decodeIfPresent(Bool.self, forKey: .spoofPowerState) ?? false
+        let legacySpoofPowerState = try container.decodeIfPresent(Bool.self, forKey: .spoofPowerState) ?? false
+        if let decodedPolicy = try container.decodeIfPresent(Int.self, forKey: .powerStatePolicy) {
+            powerStatePolicy = (0...2).contains(decodedPolicy) ? decodedPolicy : 0
+        } else {
+            powerStatePolicy = legacySpoofPowerState ? 1 : 0
+        }
+        spoofPowerState = (powerStatePolicy == 1)
+        powerSavingMode = try container.decodeIfPresent(Bool.self, forKey: .powerSavingMode) ?? false
+        memorySavingMode = try container.decodeIfPresent(Bool.self, forKey: .memorySavingMode) ?? false
+        let decodedFrameRateCap = try container.decodeIfPresent(Int.self, forKey: .frameRateCap) ?? 0
+        frameRateCap = [0, 30, 60].contains(decodedFrameRateCap) ? decodedFrameRateCap : 0
+        metalMemorySaver = try container.decodeIfPresent(Bool.self, forKey: .metalMemorySaver) ?? false
+        avMediaSaver = try container.decodeIfPresent(Bool.self, forKey: .avMediaSaver) ?? false
         blockSplashAds = try container.decodeIfPresent(Bool.self, forKey: .blockSplashAds) ?? true
         mockLocationEnabled = try container.decodeIfPresent(Bool.self, forKey: .mockLocationEnabled) ?? false
         mockLocationLatitude = try container.decodeIfPresent(Double.self, forKey: .mockLocationLatitude) ?? 39.9042
@@ -139,7 +179,7 @@ struct AppSettingsData: Codable {
     }
 }
 
-class AppSettings {
+class AppSettings: ObservableObject {
     static var appSettingsDir: URL {
         let settingsFolder =
             PlayTools.playCoverContainer.appendingPathComponent("App Settings")
@@ -157,12 +197,32 @@ class AppSettings {
 
     let info: AppInfo
     let settingsUrl: URL
-    var openWithLLDB: Bool = false
-    var openLLDBWithTerminal: Bool = true
+    var openWithLLDB: Bool = false {
+        willSet {
+            objectWillChange.send()
+        }
+    }
+    var openLLDBWithTerminal: Bool = true {
+        willSet {
+            objectWillChange.send()
+        }
+    }
     private var suppressPersistence = false
     var settings: AppSettingsData {
+        willSet {
+            objectWillChange.send()
+        }
         didSet {
-            if !suppressPersistence { encode() }
+            if !suppressPersistence {
+                encode()
+                if oldValue.touchAlternatives != settings.touchAlternatives {
+                    let bundleID = settings.bundleIdentifier.isEmpty ? info.bundleIdentifier : settings.bundleIdentifier
+                    let enabled = settings.touchAlternatives
+                    DispatchQueue.global(qos: .utility).async {
+                        Shell.setTouchAlternatives(bundleID, enabled: enabled)
+                    }
+                }
+            }
         }
     }
 
@@ -177,6 +237,11 @@ class AppSettings {
         if !decode() {
             preserveUnreadableSettingsIfPresent()
             encode()
+            let bundleID = info.bundleIdentifier
+            let enabled = settings.touchAlternatives
+            DispatchQueue.global(qos: .utility).async {
+                Shell.setTouchAlternatives(bundleID, enabled: enabled)
+            }
         }
 
         if settings.bundleIdentifier != info.bundleIdentifier {

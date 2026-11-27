@@ -162,7 +162,7 @@ private struct InteractiveMapView: NSViewRepresentable {
 }
 
 struct LocationPickerView: View {
-    @Binding var settings: AppSettings
+    @ObservedObject var settings: AppSettings
     @Environment(\.dismiss) private var dismiss
 
     @State private var wgsLat: Double
@@ -176,11 +176,11 @@ struct LocationPickerView: View {
     @State private var applyChinaOffset = true
     @State private var recenterVersion = 0
 
-    init(settings: Binding<AppSettings>) {
-        self._settings = settings
-        let lat = settings.wrappedValue.settings.mockLocationLatitude
-        let lon = settings.wrappedValue.settings.mockLocationLongitude
-        let name = settings.wrappedValue.settings.mockLocationName
+    init(settings: AppSettings) {
+        self._settings = ObservedObject(wrappedValue: settings)
+        let lat = settings.settings.mockLocationLatitude
+        let lon = settings.settings.mockLocationLongitude
+        let name = settings.settings.mockLocationName
         _wgsLat = State(initialValue: lat)
         _wgsLon = State(initialValue: lon)
         _locationName = State(initialValue: name)

@@ -79,17 +79,17 @@ struct AppSettingsView: View {
             }
 
             TabView {
-                KeymappingView(settings: $viewModel.settings)
+                KeymappingView(settings: viewModel.settings)
                     .tabItem {
                         Text("settings.tab.km")
                     }
                     .disabled(!(hasPlayTools ?? true))
-                GraphicsView(settings: $viewModel.settings)
+                GraphicsView(settings: viewModel.settings)
                     .tabItem {
                         Text("settings.tab.graphics")
                     }
                     .disabled(!(hasPlayTools ?? true))
-                BypassesView(settings: $viewModel.settings,
+                BypassesView(settings: viewModel.settings,
                              hasPlayTools: $hasPlayTools,
                              task: $currentTask,
                              app: viewModel.app)
@@ -97,7 +97,7 @@ struct AppSettingsView: View {
                         Text("settings.tab.bypasses")
                     }
                     .disabled(!(hasPlayTools ?? true))
-                MiscView(settings: $viewModel.settings,
+                MiscView(settings: viewModel.settings,
                          closeView: $closeView,
                          hasPlayTools: $hasPlayTools,
                          hasAlias: $hasAlias,
@@ -154,7 +154,7 @@ struct AppSettingsView: View {
 }
 
 struct KeymappingView: View {
-    @Binding var settings: AppSettings
+    @ObservedObject var settings: AppSettings
     var body: some View {
         ScrollView {
             VStack {
@@ -173,6 +173,11 @@ struct KeymappingView: View {
                 HStack {
                     Toggle("settings.toggle.optionScrollZoom", isOn: $settings.settings.optionScrollZoom)
                         .help("settings.toggle.optionScrollZoom.help")
+                    Spacer()
+                }
+                HStack {
+                    Toggle("settings.toggle.touchAlternatives", isOn: $settings.settings.touchAlternatives)
+                        .help("settings.toggle.touchAlternatives.help")
                     Spacer()
                 }
                 HStack {
@@ -276,7 +281,7 @@ private enum DeviceLayoutProfile: String {
 
 // swiftlint:disable:next type_body_length
 struct GraphicsView: View {
-    @Binding var settings: AppSettings
+    @ObservedObject var settings: AppSettings
     @State var customWidth = 1920
     @State var customHeight = 1080
     @State var showResolutionWarning = false
@@ -477,6 +482,13 @@ struct GraphicsView: View {
                 HStack {
                     Text("settings.picker.scaler")
                     Spacer()
+                    Button("1.0x") {
+                        customScaler = 1.0
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(abs(customScaler - 1.0) < 0.05)
+                    .help("settings.button.scaler1x.help")
                     Stepper {
                         TextField(
                             "settings.text.scaler",
@@ -492,6 +504,7 @@ struct GraphicsView: View {
                         if customScaler > 0.5 { customScaler -= 0.1 }
                     }
                 }
+                .help("settings.picker.scaler.help")
                 HStack {
                     Text("settings.picker.uiScale")
                     Spacer()
@@ -505,6 +518,18 @@ struct GraphicsView: View {
                     }
                     .frame(width: 250, alignment: .leading)
                     .help("settings.picker.uiScale.help")
+                }
+                HStack {
+                    Text("settings.picker.appearanceStyle")
+                    Spacer()
+                    Picker("", selection: $settings.settings.appearanceStyle) {
+                        Text("settings.picker.appearanceStyle.0").tag(0)
+                        Text("settings.picker.appearanceStyle.1").tag(1)
+                        Text("settings.picker.appearanceStyle.2").tag(2)
+                    }
+                    .labelsHidden()
+                    .frame(width: 250, alignment: .leading)
+                    .help("settings.picker.appearanceStyle.help")
                 }
                 VStack(alignment: .leading, spacing: 8) {
                     Toggle("settings.toggle.floatingWindow", isOn: $settings.settings.floatingWindow)
@@ -694,7 +719,7 @@ struct GraphicsView: View {
 }
 
 struct BypassesView: View {
-    @Binding var settings: AppSettings
+    @ObservedObject var settings: AppSettings
     @Binding var hasPlayTools: Bool?
     @Binding var task: BlockingTask
     @AppStorage("settings.settings.playChain") private var playChain = false
@@ -705,11 +730,11 @@ struct BypassesView: View {
 
     var app: PlayApp
 
-    init(settings: Binding<AppSettings>,
+    init(settings: AppSettings,
          hasPlayTools: Binding<Bool?>,
          task: Binding<BlockingTask>,
          app: PlayApp) {
-        self._settings = settings
+        self._settings = ObservedObject(wrappedValue: settings)
         self._hasPlayTools = hasPlayTools
         self._task = task
         self.app = app
@@ -766,7 +791,7 @@ struct BypassesView: View {
 }
 
 struct MiscView: View {
-    @Binding var settings: AppSettings
+    @ObservedObject var settings: AppSettings
     @Binding var closeView: Bool
     @Binding var hasPlayTools: Bool?
     @Binding var hasAlias: Bool?
@@ -782,12 +807,12 @@ struct MiscView: View {
     private var isAppModeActive: Bool {
         !settings.settings.keymapping
             && !settings.settings.discordActivity.enable
-            && !settings.settings.spoofPowerState
+            && settings.settings.powerStatePolicy != 1
             && !settings.settings.disableTimeout
     }
 
     private var isGameModeActive: Bool {
-        settings.settings.keymapping && settings.settings.spoofPowerState
+        settings.settings.keymapping
     }
 
     var body: some View {
@@ -820,13 +845,7 @@ struct MiscView: View {
                         .help("settings.toggle.blockSplashAds.help")
                     Spacer()
                 }
-                HStack {
-                    Toggle("settings.toggle.spoofPowerState",
-                           isOn: $settings.settings.spoofPowerState)
-                        .disabled(!(hasPlayTools ?? true))
-                        .help("settings.toggle.spoofPowerState.help")
-                    Spacer()
-                }
+                EfficiencySettingsView(settings: settings, hasPlayTools: hasPlayTools)
                 HStack {
                     Toggle("settings.toggle.mockLocation",
                            isOn: $settings.settings.mockLocationEnabled)
@@ -844,7 +863,7 @@ struct MiscView: View {
                             showLocationPicker = true
                         }
                         .sheet(isPresented: $showLocationPicker) {
-                            LocationPickerView(settings: $settings)
+                            LocationPickerView(settings: settings)
                         }
                     }
                 }
@@ -1023,7 +1042,9 @@ struct MiscView: View {
     private func applyAppModePreset() {
         var updated = settings.settings
         updated.keymapping = false
-        updated.spoofPowerState = false
+        if updated.powerStatePolicy == 1 {
+            updated.powerStatePolicy = 0
+        }
         updated.disableTimeout = false
         let discord = DiscordActivity()
         discord.enable = false
@@ -1033,21 +1054,85 @@ struct MiscView: View {
         discord.image = updated.discordActivity.image
         updated.discordActivity = discord
 
-        let current = settings
-        current.settings = updated
-        settings = current
+        settings.settings = updated
     }
 
     private func applyGameModePreset() {
         var updated = settings.settings
         updated.keymapping = true
-        updated.spoofPowerState = true
 
-        let current = settings
-        current.settings = updated
-        settings = current
+        settings.settings = updated
     }
 
+}
+
+private struct EfficiencySettingsView: View {
+    @ObservedObject var settings: AppSettings
+    var hasPlayTools: Bool?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Divider()
+            Text("settings.section.efficiency")
+                .font(.headline)
+            HStack {
+                Text("settings.picker.powerStatePolicy")
+                Spacer()
+                Picker("", selection: $settings.settings.powerStatePolicy) {
+                    Text("settings.picker.powerStatePolicy.0").tag(0)
+                    Text("settings.picker.powerStatePolicy.1").tag(1)
+                    Text("settings.picker.powerStatePolicy.2").tag(2)
+                }
+                .labelsHidden()
+                .frame(width: 225)
+            }
+            .disabled(!(hasPlayTools ?? true))
+            .help("settings.picker.powerStatePolicy.help")
+            HStack {
+                Toggle("settings.toggle.powerSavingMode",
+                       isOn: $settings.settings.powerSavingMode)
+                    .disabled(!(hasPlayTools ?? true))
+                    .help("settings.toggle.powerSavingMode.help")
+                Spacer()
+            }
+            HStack {
+                Toggle("settings.toggle.memorySavingMode",
+                       isOn: $settings.settings.memorySavingMode)
+                    .disabled(!(hasPlayTools ?? true))
+                    .help("settings.toggle.memorySavingMode.help")
+                Spacer()
+            }
+            HStack {
+                Text("settings.picker.frameRateCap")
+                Spacer()
+                Picker("", selection: $settings.settings.frameRateCap) {
+                    Text("settings.picker.frameRateCap.0").tag(0)
+                    Text(verbatim: "60 FPS").tag(60)
+                    Text(verbatim: "30 FPS").tag(30)
+                }
+                .labelsHidden()
+                .frame(width: 225)
+            }
+            .disabled(!(hasPlayTools ?? true))
+            .help("settings.picker.frameRateCap.help")
+            HStack {
+                Toggle("settings.toggle.metalMemorySaver",
+                       isOn: $settings.settings.metalMemorySaver)
+                    .disabled(!(hasPlayTools ?? true))
+                    .help("settings.toggle.metalMemorySaver.help")
+                Spacer()
+            }
+            HStack {
+                Toggle("settings.toggle.avMediaSaver",
+                       isOn: $settings.settings.avMediaSaver)
+                    .disabled(!(hasPlayTools ?? true))
+                    .help("settings.toggle.avMediaSaver.help")
+                Spacer()
+            }
+            Divider()
+        }
+        .padding(.vertical, 4)
+    }
 }
 
 struct CustomDylibView: View {

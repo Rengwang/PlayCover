@@ -49,14 +49,14 @@ class Installer {
     static func install(ipaUrl: URL, export: Bool, returnCompletion: @escaping (URL?) -> Void) {
         // If (the option key is held or the install playtools popup settings is true) and its not an export,
         //    then show the installer dialog
-        let installPlayTools: Bool
+        let playToolsSelection: Bool?
         let applicationType = InstallPreferences.shared.defaultAppType
 
         if (ModifierKeyObserver.shared.isOptionKeyPressed
                 || InstallPreferences.shared.showInstallPopup) && !export {
-            installPlayTools = installPlayToolsPopup()
+            playToolsSelection = installPlayToolsPopup()
         } else {
-            installPlayTools = InstallPreferences.shared.alwaysInstallPlayTools
+            playToolsSelection = nil
         }
 
         InstallVM.shared.next(.begin, 0.0, 0.0)
@@ -77,6 +77,9 @@ class Installer {
                     return
                 }
                 InstallVM.shared.next(.library, 0.5, 0.55)
+                let installPlayTools = !export && (playToolsSelection
+                    ?? installedPlayToolsChoice(for: app)
+                    ?? InstallPreferences.shared.alwaysInstallPlayTools)
                 let originalEntitlements = try Entitlements.dumpEntitlements(exec: app.executable)
                 if export { try originalEntitlements.store(app.entitlements) }
                 let machos = resolveValidMachOs(app)
@@ -263,6 +266,16 @@ class Installer {
         }
     }
 
+    private static func installedAppURL(for bundleIdentifier: String) -> URL {
+        AppsVM.appDirectory.appendingEscapedPathComponent(bundleIdentifier).appendingPathExtension("app")
+    }
+
+    private static func installedPlayToolsChoice(for candidate: BaseApp) -> Bool? {
+        let location = installedAppURL(for: candidate.info.bundleIdentifier)
+        guard FileManager.default.fileExists(atPath: location.path) else { return nil }
+        return try? PlayTools.installedInExec(atURL: BaseApp(appUrl: location).executable)
+    }
+
     private static func installPreparedApp(_ baseApp: BaseApp, hasPlayTools: Bool,
                                            originalEntitlements: [String: Any]) throws -> PlayApp {
         let candidate = PlayApp(appUrl: baseApp.url)
@@ -279,17 +292,8 @@ class Installer {
         try candidate.signBundle()
         try Shell.run(print: false, "/usr/bin/codesign", "--verify", "--deep", "--strict", candidate.url.path)
 
-        let location = AppsVM.appDirectory
-            .appendingEscapedPathComponent(info.bundleIdentifier)
-            .appendingPathExtension("app")
-        let installedPath = location.resolvingSymlinksInPath().path + "/"
-        if NSRunningApplication.runningApplications(withBundleIdentifier: info.bundleIdentifier).contains(where: {
-            !$0.isTerminated && $0.executableURL?.resolvingSymlinksInPath().path.hasPrefix(installedPath) == true
-        }) {
-            throw PlayCoverError.appRunningDuringInstall
-        }
-
-        try publishBundle(candidate.url, at: location)
+        let location = installedAppURL(for: info.bundleIdentifier)
+        try publishBundle(candidate.url, at: location, bundleIdentifier: info.bundleIdentifier)
         let installed = PlayApp(appUrl: location)
         do {
             try originalEntitlements.store(installed.entitlements)
@@ -298,14 +302,27 @@ class Installer {
         }
         installed.removeAlias()
         installed.createAlias()
+        _ = installed.settings
         return installed
     }
 
     /// Both paths are on the install volume. An old bundle stays live until the kernel commits the swap.
-    private static func publishBundle(_ candidate: URL, at location: URL) throws {
-        if renamex_np(candidate.path, location.path, UInt32(RENAME_EXCL)) == 0 { return }
-        if errno == EEXIST && renamex_np(candidate.path, location.path, UInt32(RENAME_SWAP)) == 0 { return }
-        throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+    static func publishBundle(_ candidate: URL, at location: URL,
+                              bundleIdentifier: String, requireExisting: Bool = false) throws {
+        let installedPath = location.resolvingSymlinksInPath().path + "/"
+        if NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier).contains(where: {
+            !$0.isTerminated && $0.executableURL?.resolvingSymlinksInPath().path.hasPrefix(installedPath) == true
+        }) {
+            throw PlayCoverError.appRunningDuringInstall
+        }
+
+        if !requireExisting {
+            if renamex_np(candidate.path, location.path, UInt32(RENAME_EXCL)) == 0 { return }
+            guard errno == EEXIST else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        }
+        guard renamex_np(candidate.path, location.path, UInt32(RENAME_SWAP)) == 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
     }
 }
 
@@ -320,6 +337,7 @@ extension Installer {
         let app = try ipa.unzip()
 
         // Skip interactive Mac App Store alert (checkOfficialMacOS) in headless CLI mode.
+        let installPlayTools = installedPlayToolsChoice(for: app) ?? true
         let originalEntitlements = try Entitlements.dumpEntitlements(exec: app.executable)
         let machos = resolveValidMachOs(app)
         app.validMachOs = machos
@@ -336,7 +354,9 @@ extension Installer {
             try Shell.signMacho(macho)
         }
 
-        try await PlayTools.installInIPA(app.executable)
+        if installPlayTools {
+            try await PlayTools.installInIPA(app.executable)
+        }
         app.info.applicationCategoryType = applicationType
 
         try app.executable.setBinaryPosixPermissions(0o755)
@@ -349,7 +369,8 @@ extension Installer {
         let playChainDir = PlayTools.playCoverContainer.appendingPathComponent("PlayChain")
         try FileManager.default.createDirectory(at: playChainDir, withIntermediateDirectories: true)
         try ipa.removeQuarantine(app.url)
-        let installedApp = try installPreparedApp(app, hasPlayTools: true, originalEntitlements: originalEntitlements)
+        let installedApp = try installPreparedApp(app, hasPlayTools: installPlayTools,
+                                                  originalEntitlements: originalEntitlements)
         installedApp.settings.sync()
         return installedApp
     }

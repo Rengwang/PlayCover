@@ -8,6 +8,7 @@ import SwiftUI
 
 private enum ManagedFeatureSection: String, CaseIterable, Identifiable {
     case layoutDisplay
+    case performanceEfficiency
     case camera
     case privacyExperience
     case inputControls
@@ -18,6 +19,7 @@ private enum ManagedFeatureSection: String, CaseIterable, Identifiable {
     var titleKey: String {
         switch self {
         case .layoutDisplay: return "featureManager.section.layoutDisplay"
+        case .performanceEfficiency: return "featureManager.section.performanceEfficiency"
         case .camera: return "featureManager.section.camera"
         case .privacyExperience: return "featureManager.section.privacyExperience"
         case .inputControls: return "featureManager.section.inputControls"
@@ -33,11 +35,21 @@ private enum ManagedFeatureSection: String, CaseIterable, Identifiable {
                 .toggle(.duoVerticalBar),
                 .picker(.resolution),
                 .picker(.uiScale),
+                .picker(.appearanceStyle),
                 .picker(.displayRotation),
                 .toggle(.hideTitleBar),
                 .toggle(.floatingWindow),
                 .toggle(.disableTimeout),
                 .toggle(.metalHUD)
+            ]
+        case .performanceEfficiency:
+            return [
+                .toggle(.powerSavingMode),
+                .toggle(.memorySavingMode),
+                .picker(.powerStatePolicy),
+                .picker(.frameRateCap),
+                .toggle(.metalMemorySaver),
+                .toggle(.avMediaSaver)
             ]
         case .camera:
             return [
@@ -54,6 +66,7 @@ private enum ManagedFeatureSection: String, CaseIterable, Identifiable {
             ]
         case .inputControls:
             return [
+                .toggle(.touchAlternatives),
                 .toggle(.keymapping),
                 .toggle(.noKMOnInput),
                 .toggle(.enableScrollWheel),
@@ -62,7 +75,6 @@ private enum ManagedFeatureSection: String, CaseIterable, Identifiable {
             ]
         case .compatibilitySystem:
             return [
-                .toggle(.spoofPowerState),
                 .toggle(.blockSleepSpamming),
                 .toggle(.sdkShift),
                 .toggle(.useNativePlatform),
@@ -158,7 +170,10 @@ private enum ManagedPickerFeature: String, CaseIterable, Identifiable {
     case layoutIdiom
     case resolution
     case uiScale
+    case appearanceStyle
     case displayRotation
+    case powerStatePolicy
+    case frameRateCap
     case cameraRotation
     case cameraFrontMirror
     case cameraBackMirror
@@ -172,7 +187,10 @@ private enum ManagedPickerFeature: String, CaseIterable, Identifiable {
         case .layoutIdiom: return "rectangle.split.2x1.fill"
         case .resolution: return "display"
         case .uiScale: return "textformat.size"
+        case .appearanceStyle: return "moon.circle.fill"
         case .displayRotation: return "rotate.right.fill"
+        case .powerStatePolicy: return "battery.100"
+        case .frameRateCap: return "speedometer"
         case .cameraRotation: return "camera.rotate.fill"
         case .cameraFrontMirror: return "camera.fill"
         case .cameraBackMirror: return "video.fill"
@@ -184,7 +202,10 @@ private enum ManagedPickerFeature: String, CaseIterable, Identifiable {
         case .layoutIdiom: return .blue
         case .resolution: return .indigo
         case .uiScale: return .purple
+        case .appearanceStyle: return .indigo
         case .displayRotation: return .cyan
+        case .powerStatePolicy: return .green
+        case .frameRateCap: return .blue
         case .cameraRotation: return .green
         case .cameraFrontMirror: return .teal
         case .cameraBackMirror: return .mint
@@ -196,7 +217,10 @@ private enum ManagedPickerFeature: String, CaseIterable, Identifiable {
         case .layoutIdiom: return "3"
         case .resolution: return "7"
         case .uiScale: return "1.0"
+        case .appearanceStyle: return "0"
         case .displayRotation: return "0"
+        case .powerStatePolicy: return "0"
+        case .frameRateCap: return "0"
         case .cameraRotation: return "-1"
         case .cameraFrontMirror: return "-1"
         case .cameraBackMirror: return "-1"
@@ -230,6 +254,12 @@ private enum ManagedPickerFeature: String, CaseIterable, Identifiable {
                 ManagedPickerOption(id: "1.5", literal: "150%"),
                 ManagedPickerOption(id: "2.0", literal: "200%")
             ]
+        case .appearanceStyle:
+            return [
+                ManagedPickerOption(id: "0", labelKey: "featureManager.option.appearanceStyle.0"),
+                ManagedPickerOption(id: "1", labelKey: "featureManager.option.appearanceStyle.1"),
+                ManagedPickerOption(id: "2", labelKey: "featureManager.option.appearanceStyle.2")
+            ]
         case .displayRotation:
             return [
                 ManagedPickerOption(id: "0", labelKey: "settings.settings.displayRotation.default"),
@@ -237,6 +267,18 @@ private enum ManagedPickerFeature: String, CaseIterable, Identifiable {
                 ManagedPickerOption(id: "2", labelKey: "settings.settings.displayRotation.landscapeRight"),
                 ManagedPickerOption(id: "3", labelKey: "settings.settings.displayRotation.portraitUpsideDown"),
                 ManagedPickerOption(id: "4", labelKey: "settings.settings.displayRotation.flipFix")
+            ]
+        case .powerStatePolicy:
+            return [
+                ManagedPickerOption(id: "0", labelKey: "featureManager.option.powerStatePolicy.0"),
+                ManagedPickerOption(id: "1", labelKey: "featureManager.option.powerStatePolicy.1"),
+                ManagedPickerOption(id: "2", labelKey: "featureManager.option.powerStatePolicy.2")
+            ]
+        case .frameRateCap:
+            return [
+                ManagedPickerOption(id: "0", labelKey: "featureManager.option.frameRateCap.0"),
+                ManagedPickerOption(id: "60", literal: "60 FPS"),
+                ManagedPickerOption(id: "30", literal: "30 FPS")
             ]
         case .cameraRotation:
             return [
@@ -301,8 +343,14 @@ private enum ManagedPickerFeature: String, CaseIterable, Identifiable {
                 return match.1
             }
             return String(format: "%.2f", data.uiScale)
+        case .appearanceStyle:
+            return String(data.appearanceStyle)
         case .displayRotation:
             return String(data.displayRotation)
+        case .powerStatePolicy:
+            return String(data.powerStatePolicy)
+        case .frameRateCap:
+            return String(data.frameRateCap)
         case .cameraRotation:
             return String(data.cameraRotation)
         case .cameraFrontMirror:
@@ -317,7 +365,10 @@ private enum ManagedPickerFeature: String, CaseIterable, Identifiable {
         case .layoutIdiom: return \.layoutIdiom
         case .resolution: return \.resolution
         case .uiScale: return nil
+        case .appearanceStyle: return \.appearanceStyle
         case .displayRotation: return \.displayRotation
+        case .powerStatePolicy: return \.powerStatePolicy
+        case .frameRateCap: return \.frameRateCap
         case .cameraRotation: return \.cameraRotation
         case .cameraFrontMirror: return \.cameraFrontMirror
         case .cameraBackMirror: return \.cameraBackMirror
@@ -337,6 +388,8 @@ private enum ManagedPickerFeature: String, CaseIterable, Identifiable {
             Self.syncDeviceModel(for: intValue, in: &updated)
         } else if self == .resolution {
             Self.applyResolutionSideEffects(mode: intValue, to: &updated, app: app)
+        } else if self == .powerStatePolicy {
+            updated.spoofPowerState = (intValue == 1)
         }
         return true
     }
@@ -396,6 +449,10 @@ private enum ManagedPickerFeature: String, CaseIterable, Identifiable {
 private enum ManagedToggleFeature: String, CaseIterable, Identifiable {
     case duoVerticalBar
     case hideTitleBar
+    case powerSavingMode
+    case memorySavingMode
+    case metalMemorySaver
+    case avMediaSaver
     case blockSplashAds
     case mockLocationEnabled
     case floatingWindow
@@ -403,11 +460,11 @@ private enum ManagedToggleFeature: String, CaseIterable, Identifiable {
     case noKMOnInput
     case enableScrollWheel
     case optionScrollZoom
+    case touchAlternatives
     case disableBuiltinMouse
     case disableTimeout
     case playChain
     case bypass
-    case spoofPowerState
     case blockSleepSpamming
     case sdkShift
     case useNativePlatform
@@ -424,6 +481,10 @@ private enum ManagedToggleFeature: String, CaseIterable, Identifiable {
         switch self {
         case .duoVerticalBar: return "sidebar.right"
         case .hideTitleBar: return "macwindow"
+        case .powerSavingMode: return "leaf.fill"
+        case .memorySavingMode: return "memorychip"
+        case .metalMemorySaver: return "square.stack.3d.up.fill"
+        case .avMediaSaver: return "play.rectangle.fill"
         case .blockSplashAds: return "hand.raised.fill"
         case .mockLocationEnabled: return "location.fill"
         case .floatingWindow: return "pin.fill"
@@ -431,11 +492,11 @@ private enum ManagedToggleFeature: String, CaseIterable, Identifiable {
         case .noKMOnInput: return "text.cursor"
         case .enableScrollWheel: return "arrow.up.arrow.down"
         case .optionScrollZoom: return "plus.magnifyingglass"
+        case .touchAlternatives: return "hand.draw.fill"
         case .disableBuiltinMouse: return "magicmouse.fill"
         case .disableTimeout: return "sun.max.fill"
         case .playChain: return "key.fill"
         case .bypass: return "lock.shield.fill"
-        case .spoofPowerState: return "battery.100"
         case .blockSleepSpamming: return "moon.zzz.fill"
         case .sdkShift: return "cpu"
         case .useNativePlatform: return "desktopcomputer"
@@ -450,6 +511,10 @@ private enum ManagedToggleFeature: String, CaseIterable, Identifiable {
         switch self {
         case .duoVerticalBar: return .teal
         case .hideTitleBar: return .blue
+        case .powerSavingMode: return .green
+        case .memorySavingMode: return .teal
+        case .metalMemorySaver: return .indigo
+        case .avMediaSaver: return .orange
         case .blockSplashAds: return .red
         case .mockLocationEnabled: return .blue
         case .floatingWindow: return .indigo
@@ -457,11 +522,11 @@ private enum ManagedToggleFeature: String, CaseIterable, Identifiable {
         case .noKMOnInput: return .teal
         case .enableScrollWheel: return .cyan
         case .optionScrollZoom: return .blue
+        case .touchAlternatives: return .indigo
         case .disableBuiltinMouse: return .orange
         case .disableTimeout: return .yellow
         case .playChain: return .orange
         case .bypass: return .green
-        case .spoofPowerState: return .green
         case .blockSleepSpamming: return .indigo
         case .sdkShift: return .blue
         case .useNativePlatform: return .mint
@@ -476,6 +541,10 @@ private enum ManagedToggleFeature: String, CaseIterable, Identifiable {
         switch self {
         case .duoVerticalBar: return \.duoVerticalBar
         case .hideTitleBar: return \.hideTitleBar
+        case .powerSavingMode: return \.powerSavingMode
+        case .memorySavingMode: return \.memorySavingMode
+        case .metalMemorySaver: return \.metalMemorySaver
+        case .avMediaSaver: return \.avMediaSaver
         case .blockSplashAds: return \.blockSplashAds
         case .mockLocationEnabled: return \.mockLocationEnabled
         case .floatingWindow: return \.floatingWindow
@@ -483,11 +552,11 @@ private enum ManagedToggleFeature: String, CaseIterable, Identifiable {
         case .noKMOnInput: return \.noKMOnInput
         case .enableScrollWheel: return \.enableScrollWheel
         case .optionScrollZoom: return \.optionScrollZoom
+        case .touchAlternatives: return \.touchAlternatives
         case .disableBuiltinMouse: return \.disableBuiltinMouse
         case .disableTimeout: return \.disableTimeout
         case .playChain: return \.playChain
         case .bypass: return \.bypass
-        case .spoofPowerState: return \.spoofPowerState
         case .blockSleepSpamming: return \.blockSleepSpamming
         case .sdkShift: return \.sdkShift
         case .useNativePlatform: return \.useNativePlatform

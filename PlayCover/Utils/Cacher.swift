@@ -28,6 +28,12 @@ class Cacher {
             totalCostLimit: 4*1024*1024
         )
         appIconCache.countLimit = 256
+        appIconCache.totalCostLimit = 16 * 1024 * 1024
+    }
+
+    private func cacheAppIcon(_ icon: NSImage, forPath path: String) {
+        let estimatedCost = Int(max(1, icon.size.width * icon.size.height * 4 * 4))
+        appIconCache.setObject(icon, forKey: path as NSString, cost: estimatedCost)
     }
 
     func removeImageCache() {
@@ -52,7 +58,7 @@ class Cacher {
         let icon = await Task.detached(priority: .userInitiated) {
             NSWorkspace.shared.icon(forFile: path)
         }.value
-        appIconCache.setObject(icon, forKey: path as NSString)
+        cacheAppIcon(icon, forPath: path)
         return icon
     }
 
@@ -65,7 +71,7 @@ class Cacher {
             return cached
         }
         let icon = NSWorkspace.shared.icon(forFile: path)
-        appIconCache.setObject(icon, forKey: path as NSString)
+        cacheAppIcon(icon, forPath: path)
         return icon
     }
 

@@ -422,25 +422,47 @@ class PlayTools {
     }
 
     static func removeFromApp(_ exec: URL) async {
-        Inject.removeMachO(machoPath: exec.path,
-                           cmdType: .loadDylib,
-                           backup: false,
-                           injectPath: playToolsPath.path,
-                           finishHandle: { result in
-            if result {
-                do {
-                    let pluginsUrl = exec.deletingLastPathComponent()
-                        .appendingPathComponent("PlugIns")
-
-                    if FileManager.default.fileExists(atPath: pluginsUrl.path) {
-                        try FileManager.default.removeItem(at: pluginsUrl)
-                    }
-                    try Shell.signApp(exec)
-                } catch {
-                    Log.shared.error(error)
-                }
+        do {
+            let fileManager = FileManager.default
+            let payload = exec.deletingLastPathComponent()
+            guard let bundleIdentifier = Bundle(url: payload)?.bundleIdentifier else {
+                throw PlayCoverError.infoPlistNotFound
             }
-        })
+            guard try installedInExec(atURL: exec) else { return }
+
+            let originalAttributes = try fileManager.attributesOfItem(atPath: exec.path)
+            let stagingDirectory = try fileManager.url(for: .itemReplacementDirectory, in: .userDomainMask,
+                                                       appropriateFor: payload, create: true)
+            defer { try? fileManager.removeItem(at: stagingDirectory) }
+            let stagedApp = stagingDirectory.appendingPathComponent(payload.lastPathComponent)
+            try fileManager.copyItem(at: payload, to: stagedApp)
+            let stagedExec = stagedApp.appendingPathComponent(exec.lastPathComponent)
+
+            var removed = false
+            Inject.removeMachO(machoPath: stagedExec.path, cmdType: .loadDylib, backup: false,
+                               injectPath: playToolsPath.path) { removed = $0 }
+            guard removed, try !installedInExec(atURL: stagedExec) else {
+                throw "Failed to remove PlayTools from \(exec.lastPathComponent)"
+            }
+
+            let bridge = stagedApp.appendingPathComponent("PlugIns")
+                .appendingPathComponent(akInterfacePath.lastPathComponent)
+            if fileManager.fileExists(atPath: bridge.path) {
+                try fileManager.removeItem(at: bridge)
+            }
+            // The existing app extensions already have signatures. Sign the changed outer bundle.
+            try Shell.run("/usr/bin/codesign", "-fs-", "--preserve-metadata=entitlements", stagedApp.path)
+            try Shell.run(print: false, "/usr/bin/codesign", "--verify", "--deep", "--strict", stagedApp.path)
+
+            let currentAttributes = try fileManager.attributesOfItem(atPath: exec.path)
+            guard currentAttributes[.systemFileNumber] as? NSNumber == originalAttributes[.systemFileNumber] as? NSNumber,
+                  currentAttributes[.modificationDate] as? Date == originalAttributes[.modificationDate] as? Date else {
+                throw "The app changed while removing PlayTools. Try again."
+            }
+            try Installer.publishBundle(stagedApp, at: payload, bundleIdentifier: bundleIdentifier, requireExisting: true)
+        } catch {
+            Log.shared.error(error)
+        }
     }
 
     private struct MachOLoadCommands {

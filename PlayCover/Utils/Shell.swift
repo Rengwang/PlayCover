@@ -91,6 +91,30 @@ class Shell: ObservableObject {
                       "MetalForceHudEnabled", "-bool", String(enabled))
     }
 
+    static func setTouchAlternatives(_ bundleID: String, enabled: Bool) {
+        guard !bundleID.isEmpty else { return }
+        let prefsDir = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Containers")
+            .appendingPathComponent(bundleID)
+            .appendingPathComponent("Data/Library/Preferences")
+        let plistPath = prefsDir.appendingPathComponent("\(bundleID).plist").path
+        do {
+            try FileManager.default.createDirectory(at: prefsDir, withIntermediateDirectories: true)
+            try run("/usr/bin/defaults", "write", plistPath,
+                    "com.apple.uikit.controlsmode", "-bool", String(enabled))
+            try run("/usr/bin/defaults", "write", plistPath,
+                    "PlayCover.LastSyncedTouchAlternatives", "-bool", String(enabled))
+        } catch {
+            Log.shared.error(error)
+        }
+        DistributedNotificationCenter.default().postNotificationName(
+            Notification.Name("io.playcover.PlayCover.TouchAlternativesSettingsChanged"),
+            object: bundleID,
+            userInfo: ["enabled": enabled],
+            deliverImmediately: true
+        )
+    }
+
     static func lldb(_ url: URL, withTerminalWindow: Bool = false) throws {
         Task(priority: .utility) {
             if withTerminalWindow {

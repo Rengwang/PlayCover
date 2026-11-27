@@ -92,7 +92,7 @@ class PlayApp: BaseApp {
 
             // Auto-repair previously installed bundles whose Mach-O binaries were skipped
             // (e.g. executable names containing dots) and remain unconverted.
-            let didRepairMacho = try await repairMachOsIfNeeded()
+            let didRepairMacho = try repairMachOsIfNeeded()
             let updatedMarketplaceKit = try PlayTools.configureMarketplaceKitCompatibility(info, in: url)
 
             // Install PlugIns/localizations before signing so the bundle is fully
@@ -142,7 +142,7 @@ class PlayApp: BaseApp {
             await keyCoverPasswordPrep
             await unlockKeyCover()
 
-            if try !PlayTools.isInstalled() {
+            if playToolsInstalled, try !PlayTools.isInstalled() {
                 Log.shared.error("PlayTools are not installed! Please move PlayCover.app into Applications!")
             } else if try !Macho.isMachoValidArch(executable) {
                 Log.shared.error("The app threw an error during conversion.")
@@ -168,7 +168,7 @@ class PlayApp: BaseApp {
     /// Converts unconverted Mach-O slices and applies the anti-tamper trap guard.
     /// The trap scan is cached per binary fingerprint so repeat launches do not
     /// re-read every Mach-O in the bundle.
-    private func repairMachOsIfNeeded() async throws -> Bool {
+    private func repairMachOsIfNeeded() throws -> Bool {
         let cachedVersion = settings.settings.machoTrapSchemaVersion
         let cachedFingerprint = settings.settings.machoScanFingerprint
         let currentDirToken = machoScanDirToken()
@@ -250,9 +250,6 @@ class PlayApp: BaseApp {
         guard needsBundleResign || convertedAny else { return false }
 
         try executable.setBinaryPosixPermissions(0o755)
-        if !hasPlayTools() {
-            try await PlayTools.installInIPA(executable)
-        }
         return true
     }
 
