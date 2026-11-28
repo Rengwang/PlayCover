@@ -622,3 +622,5 @@
 "preferences.globalBack.clear" = "清除";
 "preferences.globalBack.warning.unmodifiedLeftClick" = "提示：将无修饰键的“鼠标左键”设为返回快捷键后，当页面存在可返回/关闭操作时会拦截普通左键点击。";
 "preferences.globalBack.description" = "全局作用于所有应用，无需开启 iPhone 竖条，窄屏、宽屏、横屏均有效。";
+"settings.slider.scrollWheelSpeed" = "滚轮滚动速度：%.2f";
+"settings.slider.scrollWheelSpeed.help" = "每次滚轮滚动对应的触控拖动距离倍率，数值越小越慢。";

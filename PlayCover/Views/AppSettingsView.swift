@@ -194,6 +194,16 @@ struct KeymappingView: View {
                         .frame(width: 250)
                         .disabled(!settings.settings.keymapping)
                 }
+                HStack {
+                    Text(String(
+                        format: NSLocalizedString("settings.slider.scrollWheelSpeed", comment: ""),
+                        settings.settings.scrollWheelSpeed))
+                    Spacer()
+                    Slider(value: $settings.settings.scrollWheelSpeed, in: 0.25...10, label: { EmptyView() })
+                        .frame(width: 250)
+                        .disabled(!settings.settings.keymapping || !settings.settings.enableScrollWheel)
+                        .help("settings.slider.scrollWheelSpeed.help")
+                }
                 Spacer()
             }
             .padding()
@@ -203,10 +213,12 @@ struct KeymappingView: View {
 
 private enum DeviceLayoutProfile: String {
     case iphoneDuo
+    case iphone17ProMax
     case iphone16ProMax
     case iphone15ProMax
     case iphone14ProMax
     case iphone13ProMax
+    case ipadProM5
     case ipadProM4
     case ipadProM2
     case ipadProM1
@@ -222,6 +234,7 @@ private enum DeviceLayoutProfile: String {
             return .systemDefault
         case 1:
             switch data.iosDeviceModel {
+            case "iPhone18,2": return .iphone17ProMax
             case "iPhone17,2": return .iphone16ProMax
             case "iPhone16,2": return .iphone15ProMax
             case "iPhone14,3": return .iphone13ProMax
@@ -229,6 +242,7 @@ private enum DeviceLayoutProfile: String {
             }
         default:
             switch data.iosDeviceModel {
+            case "iPad17,3": return .ipadProM5
             case "iPad16,6": return .ipadProM4
             case "iPad14,5": return .ipadProM2
             case "iPad8,6": return .ipadProA12X
@@ -243,6 +257,9 @@ private enum DeviceLayoutProfile: String {
         case .iphoneDuo:
             data.layoutIdiom = 3
             data.iosDeviceModel = "iPhone19,4"
+        case .iphone17ProMax:
+            data.layoutIdiom = 1
+            data.iosDeviceModel = "iPhone18,2"
         case .iphone16ProMax:
             data.layoutIdiom = 1
             data.iosDeviceModel = "iPhone17,2"
@@ -255,6 +272,9 @@ private enum DeviceLayoutProfile: String {
         case .iphone13ProMax:
             data.layoutIdiom = 1
             data.iosDeviceModel = "iPhone14,3"
+        case .ipadProM5:
+            data.layoutIdiom = 2
+            data.iosDeviceModel = "iPad17,3"
         case .ipadProM4:
             data.layoutIdiom = 2
             data.iosDeviceModel = "iPad16,6"
@@ -334,11 +354,13 @@ struct GraphicsView: View {
                     Picker("", selection: deviceProfileBinding) {
                         Text("iPhone Duo | A20 Pro").tag(DeviceLayoutProfile.iphoneDuo)
                         Divider()
+                        Text("iPhone 17 Pro Max | A19 Pro | 12GB").tag(DeviceLayoutProfile.iphone17ProMax)
                         Text("iPhone 16 Pro Max | A18 Pro | 8GB").tag(DeviceLayoutProfile.iphone16ProMax)
                         Text("iPhone 15 Pro Max | A17 Pro | 8GB").tag(DeviceLayoutProfile.iphone15ProMax)
                         Text("iPhone 14 Pro Max | A16 | 6GB").tag(DeviceLayoutProfile.iphone14ProMax)
                         Text("iPhone 13 Pro Max | A15 | 6GB").tag(DeviceLayoutProfile.iphone13ProMax)
                         Divider()
+                        Text("iPad Pro (13-inch) (M5) | M5 | 16GB").tag(DeviceLayoutProfile.ipadProM5)
                         Text("iPad Pro (13-inch) (7th gen) | M4 | 8GB").tag(DeviceLayoutProfile.ipadProM4)
                         Text("iPad Pro (12.9-inch) (6th gen) | M2 | 8GB").tag(DeviceLayoutProfile.ipadProM2)
                         Text("iPad Pro (12.9-inch) (5th gen) | M1 | 8GB").tag(DeviceLayoutProfile.ipadProM1)

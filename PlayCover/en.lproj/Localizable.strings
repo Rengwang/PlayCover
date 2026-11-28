@@ -576,3 +576,5 @@
 "preferences.globalBack.clear" = "Clear";
 "preferences.globalBack.warning.unmodifiedLeftClick" = "Warning: Using an unmodified left mouse click for Back will intercept normal left clicks whenever a back/close action is available.";
 "preferences.globalBack.description" = "Works across all iOS apps on Mac, even when Duo Vertical Bar is turned off or the window is narrow.";
+"settings.slider.scrollWheelSpeed" = "Scroll wheel speed: %.2f";
+"settings.slider.scrollWheelSpeed.help" = "How far the scroll wheel drags per notch. Lower is slower.";

@@ -42,6 +42,7 @@ struct AppSettingsData: Codable {
     var rootWorkDir = true
     var noKMOnInput = true
     var enableScrollWheel = true
+    var scrollWheelSpeed: Float = 4
     var optionScrollZoom = true
     var touchAlternatives = true
     var hideTitleBar = true
@@ -128,6 +129,7 @@ struct AppSettingsData: Codable {
         rootWorkDir = try container.decodeIfPresent(Bool.self, forKey: .rootWorkDir) ?? true
         noKMOnInput = try container.decodeIfPresent(Bool.self, forKey: .noKMOnInput) ?? true
         enableScrollWheel = try container.decodeIfPresent(Bool.self, forKey: .enableScrollWheel) ?? true
+        scrollWheelSpeed = try container.decodeIfPresent(Float.self, forKey: .scrollWheelSpeed) ?? 4
         optionScrollZoom = try container.decodeIfPresent(Bool.self, forKey: .optionScrollZoom) ?? true
         touchAlternatives = try container.decodeIfPresent(Bool.self, forKey: .touchAlternatives) ?? true
         hideTitleBar = try container.decodeIfPresent(Bool.self, forKey: .hideTitleBar) ?? true

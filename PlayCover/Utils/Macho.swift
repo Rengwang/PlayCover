@@ -97,6 +97,7 @@ class Macho {
 
         print("Stripping MachO...")
         try stripBinary(&binary)
+        patchUnrealEngineIOSPath(&binary, near: macho)
         if try !isCatalyst(binary) {
             print("Replacing version command...")
             try replaceVersionCommand(&binary)
@@ -113,6 +114,44 @@ class Macho {
         print("Writing revised MachO...")
         try binary.write(to: macho, options: .atomic)
         try macho.setBinaryPosixPermissions(0o755)
+    }
+
+    /// Rewrites Unreal Engine's UTF-16LE `/OnDemandResources/` prefix check to `/Users/` so
+    /// `ConvertToIOSPath` / `ConvertToPlatformPath` treats PlayCover container paths as absolute.
+    private static func patchUnrealEngineIOSPath(_ binary: inout Data, near macho: URL) {
+        let dir = macho.deletingLastPathComponent()
+        let ue4Flag = dir.appendingPathComponent("ue4commandline.txt")
+        let ueFlag = dir.appendingPathComponent("uecommandline.txt")
+        guard FileManager.default.fileExists(atPath: ue4Flag.path)
+            || FileManager.default.fileExists(atPath: ueFlag.path) else {
+            return
+        }
+        replaceUTF16LEString(&binary, from: "/OnDemandResources/", to: "/Users/")
+    }
+
+    private static func utf16le(_ text: String) -> Data {
+        var bytes: [UInt8] = []
+        bytes.reserveCapacity(text.utf16.count * 2)
+        for scalar in text.utf16 {
+            bytes.append(UInt8(scalar & 0xFF))
+            bytes.append(UInt8((scalar >> 8) & 0xFF))
+        }
+        return Data(bytes)
+    }
+
+    private static func replaceUTF16LEString(_ binary: inout Data, from oldText: String, to newText: String) {
+        let oldBytes = utf16le(oldText)
+        let newBytes = utf16le(newText)
+        guard let offset = binary.range(of: oldBytes)?.lowerBound else {
+            return
+        }
+        let oldLen = oldBytes.count
+        var repl = Array(newBytes.prefix(oldLen))
+        if repl.count < oldLen {
+            repl.append(contentsOf: repeatElement(UInt8(0), count: oldLen - repl.count))
+        }
+        binary.replaceSubrange(offset..<(offset + oldLen), with: repl)
+        print("Patched UE path prefix at 0x\(String(offset, radix: 16)): \(oldText) -> \(newText)")
     }
 
     static let libraryRepairSchemaVersion = 2
